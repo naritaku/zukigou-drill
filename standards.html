@@ -94,6 +94,7 @@
 </nav>
 
 <script>
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 fetch('/api/catalog').then(r=>r.json()).then(list=>{
   document.getElementById('count').textContent = list.length + ' 記号';
   const cats = {};
@@ -103,7 +104,7 @@ fetch('/api/catalog').then(r=>r.json()).then(list=>{
   for (const [cat, syms] of Object.entries(cats)) {
     const h = document.createElement('div');
     h.className = 'cat-head';
-    h.innerHTML = `<span class="label-caps">${cat}</span><small>${syms.length}</small>`;
+    h.innerHTML = `<span class="label-caps">${esc(cat)}</span><small>${syms.length}</small>`;
     root.appendChild(h);
     syms.forEach(s => {
       const el = document.createElement('div');
@@ -111,17 +112,17 @@ fetch('/api/catalog').then(r=>r.json()).then(list=>{
       el.innerHTML = `
         <div class="head">
           <div class="thumb">${s.ref_svg}</div>
-          <b>${s.name}</b>
+          <b>${esc(s.name)}</b>
           <span class="material-symbols-outlined">expand_more</span>
         </div>
         <div class="detail">
           <div class="fig">${s.ref_svg}</div>
-          <p class="desc">${s.description}</p>
+          <p class="desc">${esc(s.description)}</p>
           <div class="sect">
             <span class="label-caps">描き方のポイント</span>
-            ${s.required_features.map(f=>`<div class="pt">${f}</div>`).join('')}
+            ${s.required_features.map(f=>`<div class="pt">${esc(f)}</div>`).join('')}
           </div>
-          ${s.common_mistakes && s.common_mistakes.length ? `<div class="sect"><span class="label-caps">よくある誤り</span>${s.common_mistakes.map(m=>`<div class="mist">⚠ ${m}</div>`).join('')}</div>` : ''}
+          ${s.common_mistakes && s.common_mistakes.length ? `<div class="sect"><span class="label-caps">よくある誤り</span>${s.common_mistakes.map(m=>`<div class="mist">⚠ ${esc(m)}</div>`).join('')}</div>` : ''}
         </div>`;
       el.querySelector('.head').onclick = () => el.classList.toggle('open');
       root.appendChild(el);
