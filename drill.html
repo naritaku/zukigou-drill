@@ -166,7 +166,7 @@ const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 let dpr = window.devicePixelRatio || 1;
 let drawing = false, tool = "pen", strokes = [], redoStack = [], current = null;
-let q = null, lastImg = null, lastJudgment = null, judging = false;
+let q = null, lastImg = null, lastSubmittedImg = null, lastJudgment = null, judging = false;
 
 function resize() {
   const w = cv.clientWidth || cv.parentElement.clientWidth;
@@ -214,10 +214,10 @@ $("pen").onclick = () => setTool("pen");
 $("eraser").onclick = () => setTool("eraser");
 $("undo").onclick = () => { const s = strokes.pop(); if (s) redoStack.push(s); redraw(); };
 $("redo").onclick = () => { const s = redoStack.pop(); if (s) strokes.push(s); redraw(); };
-$("clear").onclick = () => { strokes = []; redoStack = []; redraw(); hideReport(); };
+$("clear").onclick = () => { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); };
 $("next").onclick = () => { if (!judging) loadQuestion(); };
 $("goNext").onclick = () => { if (!judging) loadQuestion(); };
-$("retry").onclick = () => { if (!judging) { strokes = []; redoStack = []; redraw(); hideReport(); } };
+$("retry").onclick = () => { if (!judging) { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); } };
 
 function showError(msg) {
   const e = $("errbox"); e.textContent = msg; e.style.display = "block";
@@ -228,7 +228,7 @@ function hideReport() {
 }
 
 async function loadQuestion() {
-  hideReport(); strokes = []; redoStack = []; redraw();
+  hideReport(); strokes = []; redoStack = []; lastSubmittedImg = null; redraw();
   q = await (await fetch("/api/question")).json();
   $("qName").textContent = q.name;
   $("qCat").textContent = "JIS C 0303\n" + q.category;
@@ -281,6 +281,10 @@ $("judge").onclick = async () => {
   if (judging || !q) return;
   const img = exportImage();
   if (!img) { showError("何か描いてから判定してください"); return; }
+  if (img === lastSubmittedImg) {
+    showError("前回から描画が変わっていません。修正してから判定してください");
+    return;
+  }
 
   const judgingSymbolId = q.id;
   lastImg = img;
@@ -300,6 +304,7 @@ $("judge").onclick = async () => {
     }
     const result = await res.json();
     if (result.symbol_id !== judgingSymbolId) throw new Error("response symbol mismatch");
+    lastSubmittedImg = img;
     render(result);
   } catch (e) {
     showError("判定結果を受信できませんでした。通信状態を確認して再試行してください。");
