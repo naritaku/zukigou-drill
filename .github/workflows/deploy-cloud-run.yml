@@ -1,0 +1,61 @@
+name: Deploy Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      gemini_model:
+        description: Gemini model name for runtime GEMINI_MODEL
+        required: true
+        default: gemini-3.6-flash
+      max_instances:
+        description: Cloud Run max instances
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: zukigou-drill-dojo
+  REGION: asia-northeast1
+  SERVICE_NAME: zukigou-drill
+  SECRET_NAME: GEMINI_API_KEY
+
+jobs:
+  deploy:
+    name: Deploy main to Cloud Run
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy from source
+        run: |
+          gcloud run deploy "$SERVICE_NAME" --source . \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --allow-unauthenticated \
+            --max-instances "${{ inputs.max_instances }}" \
+            --set-secrets "GEMINI_API_KEY=${SECRET_NAME}:latest" \
+            --set-env-vars "GEMINI_MODEL=${{ inputs.gemini_model }}"
+
+      - name: Verify health endpoints
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')"
+          curl -fsS "$SERVICE_URL/healthz"
+          curl -fsS "$SERVICE_URL/readyz"
