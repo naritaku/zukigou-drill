@@ -621,17 +621,23 @@
       "verified": true,
       "required_features": [
         "円が二重(外側の円と内側の円)に描かれている",
-        "円の中に小文字のtと読める文字が書かれている"
+        "円の中に小文字のtと読める文字が書かれている",
+        "小文字のtは円の内部中央に配置されている"
       ],
       "forbidden_features": [
-        "円が一重である(子機)",
-        "文字が大文字のTである(電話機)"
+        "円が一重である(反対の円数である)",
+        "文字が大文字のTである(反対の文字種である)",
+        "円内の文字がない、または小文字t以外の別文字である"
       ],
       "common_mistakes": [
         "電話機形インターホン子機(一重円+t)と混同する",
         "加入電話機(二重円+T)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
+      "confusable_symbols": [
+        "加入電話機(同じ二重円で文字だけが大文字T)",
+        "電話機形インターホン子機(同じ小文字tで円数だけが一重)"
+      ],
       "description": "建物内の相互通話を行うインターホンの親機(電話機形)。二重円で親機を表す。"
     },
     {
@@ -641,17 +647,23 @@
       "verified": true,
       "required_features": [
         "円が一重で描かれている",
-        "円の中に小文字のtと読める文字が書かれている"
+        "円の中に小文字のtと読める文字が書かれている",
+        "小文字のtは円の内部中央に配置されている"
       ],
       "forbidden_features": [
-        "円が二重である(親機)",
-        "文字が大文字のTである(電話機)"
+        "円が二重である(反対の円数である)",
+        "文字が大文字のTである(反対の文字種である)",
+        "円内の文字がない、または小文字t以外の別文字である"
       ],
       "common_mistakes": [
         "電話機形インターホン親機(二重円+t)と混同する",
         "内線電話機(一重円+T)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
+      "confusable_symbols": [
+        "内線電話機(同じ一重円で文字だけが大文字T)",
+        "電話機形インターホン親機(同じ小文字tで円数だけが二重)"
+      ],
       "description": "インターホンの子機(電話機形)。一重円で子機を表す。"
     },
     {
@@ -661,17 +673,23 @@
       "verified": true,
       "required_features": [
         "円が一重で描かれている",
-        "円の中に大文字のTと読める文字が書かれている"
+        "円の中に大文字のTと読める文字が書かれている",
+        "大文字のTは円の内部中央に配置されている"
       ],
       "forbidden_features": [
-        "円が二重である(加入電話機)",
-        "文字が小文字のtである(インターホン)"
+        "円が二重である(反対の円数である)",
+        "文字が小文字のtである(反対の文字種である)",
+        "円内の文字がない、または大文字T以外の別文字である"
       ],
       "common_mistakes": [
         "加入電話機(二重円+T)と混同する",
         "電話機形インターホン子機(一重円+t)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='60' text-anchor='middle' font-size='27' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
+      "confusable_symbols": [
+        "電話機形インターホン子機(同じ一重円で文字だけが小文字t)",
+        "加入電話機(同じ大文字Tで円数だけが二重)"
+      ],
       "description": "構内交換機(PBX)や主装置の配下で使う内線用電話機。ボタン電話機を示す場合はBTを傍記する。"
     },
     {
@@ -681,17 +699,23 @@
       "verified": true,
       "required_features": [
         "円が二重(外側の円と内側の円)に描かれている",
-        "円の中に大文字のTと読める文字が書かれている"
+        "円の中に大文字のTと読める文字が書かれている",
+        "大文字のTは円の内部中央に配置されている"
       ],
       "forbidden_features": [
-        "円が一重である(内線電話機)",
-        "文字が小文字のtである(インターホン)"
+        "円が一重である(反対の円数である)",
+        "文字が小文字のtである(反対の文字種である)",
+        "円内の文字がない、または大文字T以外の別文字である"
       ],
       "common_mistakes": [
         "内線電話機(一重円+T)と混同する",
         "電話機形インターホン親機(二重円+t)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='60' text-anchor='middle' font-size='24' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
+      "confusable_symbols": [
+        "電話機形インターホン親機(同じ二重円で文字だけが小文字t)",
+        "内線電話機(同じ大文字Tで円数だけが一重)"
+      ],
       "description": "電気通信事業者の回線に直接接続する電話機。"
     },
     {
