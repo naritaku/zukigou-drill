@@ -64,18 +64,19 @@
       "category": "テレビ共聴",
       "verified": true,
       "features": [
-        "弧(皿状の反射面)が描かれている",
-        "弧の開口側に給電部(斜線の入った小さな箱)が描かれている",
+        "左に開いた弧(皿状の反射面)が描かれている",
+        "弧が、横長の開いた四角形の左側に水平方向の隙間なく接している",
+        "開いた四角形の内部に左上頂点から右下頂点への斜線(＼)が1本ある",
         "T字形のテレビアンテナではない"
       ],
       "common_mistakes": [
         "テレビジョンアンテナ(T字)と混同する"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M30 30 A 20 20 0 0 1 30 70'/><polyline points='50,40 90,40 90,60 50,60'/><line x1='50' y1='40' x2='90' y2='60'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M50 30 A 20 20 0 0 1 50 70'/><polyline points='50,40 90,40 90,60 50,60'/><line x1='50' y1='40' x2='90' y2='60'/></svg>",
       "required_features": [
         "左に開いた半円(弧)が描かれている",
-        "半円の弧の頂点が、横長の四角形の左側(開いた辺)に接している",
-        "四角形は上辺・右辺・下辺の3辺で描かれ、内部に左上から右下への斜線(＼)が1本ある"
+        "半円の弧が、横長の四角形の左側(開いた辺)に水平方向の隙間なく接している",
+        "四角形は上辺・右辺・下辺の3辺で描かれ、内部に左上頂点から右下頂点への斜線(＼)が1本ある"
       ],
       "forbidden_features": [
         "全体がT字形である",
