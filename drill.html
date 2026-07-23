@@ -260,7 +260,19 @@ $("redo").onclick = () => { const s = redoStack.pop(); if (s) strokes.push(s); r
 $("clear").onclick = () => { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); };
 $("next").onclick = () => { if (!judging) loadQuestion(); };
 $("goNext").onclick = () => { if (!judging) loadQuestion(); };
-$("retry").onclick = () => { if (!judging) { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); } };
+function resetDrawingState({ scrollTop = false } = {}) {
+  hideReport();
+  strokes = [];
+  redoStack = [];
+  lastSubmittedImg = null;
+  redraw();
+  if (scrollTop) {
+    // レビュー結果までスクロールした位置を残すと、再描画時にキャンバス下部だけが表示されて
+    // 入力位置がずれて見えるため、描画面の先頭へ戻してから描き直せるようにする。
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  }
+}
+$("retry").onclick = () => { if (!judging) resetDrawingState({ scrollTop: true }); };
 
 function showError(msg) {
   const e = $("errbox"); e.textContent = msg; e.style.display = "block";
@@ -272,7 +284,7 @@ function hideReport() {
 }
 
 async function loadQuestion() {
-  hideReport(); strokes = []; redoStack = []; lastSubmittedImg = null; redraw();
+  resetDrawingState();
   q = await (await fetch("/api/question")).json();
   $("qName").textContent = q.name;
   $("qCat").textContent = "JIS C 0303\n" + q.category;
