@@ -76,6 +76,71 @@ GCP_SERVICE_ACCOUNT=github-actions-deployer@zukigou-drill-dojo.iam.gserviceaccou
 
 `GEMINI_API_KEY` は GitHub Secrets ではなく Google Cloud Secret Manager の `GEMINI_API_KEY` に登録しておく。workflow はこの Secret を Cloud Run の環境変数として参照する。
 
+## デプロイ後のエラーログ確認計画
+
+クラウドにデプロイした後に「判定サービスが使えない」と表示された場合は、Cloud Run のログで `/api/judge` と Gemini 設定まわりを順に確認する。
+
+1. **対象サービスとリビジョンを確認する。**
+
+   ```bash
+   gcloud run services describe zukigou-drill \
+     --project zukigou-drill-dojo \
+     --region asia-northeast1 \
+     --format='value(status.url,status.latestReadyRevisionName)'
+   ```
+
+2. **直近の Cloud Run エラーログを読む。** まずは例外、503、Gemini API 呼び出し失敗を探す。
+
+   ```bash
+   gcloud logging read \
+     'resource.type="cloud_run_revision" AND resource.labels.service_name="zukigou-drill" AND resource.labels.location="asia-northeast1" AND severity>=ERROR' \
+     --project zukigou-drill-dojo \
+     --freshness=2h \
+     --limit=50 \
+     --format='table(timestamp,severity,resource.labels.revision_name,textPayload,jsonPayload.message)'
+   ```
+
+3. **判定 API のリクエスト周辺ログを時系列で見る。** ユーザー操作直後の時刻が分かる場合は `--freshness` を短くして確認する。
+
+   ```bash
+   gcloud logging read \
+     'resource.type="cloud_run_revision" AND resource.labels.service_name="zukigou-drill" AND resource.labels.location="asia-northeast1" AND (httpRequest.requestUrl:"/api/judge" OR textPayload:"judge" OR jsonPayload.message:"judge")' \
+     --project zukigou-drill-dojo \
+     --freshness=30m \
+     --limit=100 \
+     --format='table(timestamp,severity,httpRequest.status,httpRequest.requestUrl,textPayload,jsonPayload.message)'
+   ```
+
+4. **設定不足かを切り分ける。** `/readyz` が 503 の場合は `GEMINI_API_KEY` Secret の未設定・参照失敗、または環境変数の反映漏れを疑う。
+
+   ```bash
+   SERVICE_URL="$(gcloud run services describe zukigou-drill \
+     --project zukigou-drill-dojo \
+     --region asia-northeast1 \
+     --format='value(status.url)')"
+   curl -i "$SERVICE_URL/readyz"
+   gcloud run services describe zukigou-drill \
+     --project zukigou-drill-dojo \
+     --region asia-northeast1 \
+     --format='yaml(spec.template.spec.containers[0].env)'
+   ```
+
+5. **Secret Manager と Cloud Run 実行サービスアカウントの権限を確認する。** Secret の存在、latest バージョン、実行サービスアカウントの Secret Accessor 権限を確認する。
+
+   ```bash
+   gcloud secrets describe GEMINI_API_KEY --project zukigou-drill-dojo
+   gcloud secrets versions list GEMINI_API_KEY --project zukigou-drill-dojo
+   gcloud run services describe zukigou-drill \
+     --project zukigou-drill-dojo \
+     --region asia-northeast1 \
+     --format='value(spec.template.spec.serviceAccountName)'
+   gcloud secrets get-iam-policy GEMINI_API_KEY --project zukigou-drill-dojo
+   ```
+
+6. **Gemini API 側の失敗を確認する。** ログに quota、permission、model not found、API key invalid が出ていないか確認し、必要に応じて workflow の `gemini_model` 入力、API キーの有効性、プロジェクトの割り当てを見直す。
+
+7. **再現確認を記録する。** 修正後に `/readyz` とブラウザからの判定操作を再実行し、確認した URL、時刻、該当リビジョン、ログ抜粋、実施した対処を issue または PR に残す。
+
 ## 記号の追加方法
 
 `symbols.json` にエントリを追加する。表示用メタデータと判定用ルーブリックを混同しないよう、次の役割を分けて定義する。
