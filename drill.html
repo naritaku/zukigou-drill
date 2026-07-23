@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="/theme.css">
 <style>
   body { padding: 86px 16px 156px; }
+  body.reviewed { padding-bottom: 16px; }
 
   /* ---- fixed header ---- */
   header {
@@ -37,6 +38,9 @@
 
   /* ---- canvas ---- */
   .canvas-wrap { border: 1.5px solid var(--primary); background: #fff; border-radius: 2px; }
+  body.reviewed .canvas-wrap,
+  body.reviewed .tools,
+  body.reviewed .submitbar { display: none; }
   canvas { display: block; width: 100%; touch-action: none; cursor: crosshair; }
 
   #errbox {
@@ -262,6 +266,7 @@ function showError(msg) {
   const e = $("errbox"); e.textContent = msg; e.style.display = "block";
 }
 function hideReport() {
+  document.body.classList.remove("reviewed");
   $("errbox").style.display = "none";
   $("report").classList.remove("show");
 }
@@ -374,15 +379,14 @@ function render(r) {
   $("score").textContent = r.score;
 
   const cmp = $("compare");
-  if (!r.passed && r.ref_svg) {
-    $("yourImg").src = lastImg;
+  $("yourImg").src = lastImg;
+  if (r.ref_svg) {
     // ref_svg はリポジトリ内の検証済み問題データのみを使用する。
     $("refSvg").innerHTML = r.ref_svg;
-    cmp.style.display = "grid";
   } else {
     $("refSvg").replaceChildren();
-    cmp.style.display = "none";
   }
+  cmp.style.display = "grid";
 
   const checks = $("checks");
   const checklistToggle = $("checklistToggle");
@@ -411,8 +415,9 @@ function render(r) {
     mistakes.append(row);
   }
   $("obs").textContent = "観察: " + r.observation;
+  document.body.classList.add("reviewed");
   $("report").classList.add("show");
-  $("report").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("report").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 $("dispute").onclick = async () => {
