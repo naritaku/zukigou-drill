@@ -56,7 +56,7 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
         if not isinstance(symbol, dict):
             raise RuntimeError(f"symbols[{index}] must be an object")
         symbol_id = symbol.get("id")
-        required_features = symbol.get("required_features", symbol.get("features"))
+        required_features = symbol.get("required_features")
         forbidden_features = symbol.get("forbidden_features", [])
         confusable_symbols = symbol.get("confusable_symbols", [])
         if not isinstance(symbol_id, str) or not symbol_id:
@@ -343,7 +343,7 @@ def judge(req: JudgeRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
 
-    required_features: list[str] = symbol.get("required_features", symbol["features"])
+    required_features: list[str] = symbol["required_features"]
     forbidden_features: list[str] = symbol.get("forbidden_features", [])
     confusable_symbols: list[str] = symbol.get("confusable_symbols", [])
 
@@ -435,7 +435,7 @@ def report(req: ReportRequest, request: Request) -> dict[str, bool]:
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
 
-    expected_features = [f"必須: {value}" for value in symbol.get("required_features", symbol["features"])]
+    expected_features = [f"必須: {value}" for value in symbol["required_features"]]
     expected_features += [f"除外: {value}がない" for value in symbol.get("forbidden_features", [])]
     expected_features += [f"識別: {value}の決定的特徴ではない" for value in symbol.get("confusable_symbols", [])]
     received_features = [check.feature for check in req.judgment.checks]
