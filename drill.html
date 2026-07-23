@@ -106,6 +106,15 @@
     padding-bottom: env(safe-area-inset-bottom); background: var(--primary);
   }
   .submitbar button { width: 100%; font-size: 14px; letter-spacing: .14em; }
+  .judge-spinner {
+    width: 18px; height: 18px;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; display: inline-block;
+    animation: judge-spin .8s linear infinite;
+  }
+  @keyframes judge-spin {
+    to { transform: rotate(360deg); }
+  }
 </style>
 </head>
 <body>
@@ -166,7 +175,7 @@ const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 let dpr = window.devicePixelRatio || 1;
 let drawing = false, tool = "pen", strokes = [], redoStack = [], current = null;
-let q = null, lastImg = null, lastJudgment = null, judging = false;
+let q = null, lastImg = null, lastSubmittedImg = null, lastJudgment = null, judging = false;
 
 function resize() {
   const w = cv.clientWidth || cv.parentElement.clientWidth;
@@ -214,10 +223,10 @@ $("pen").onclick = () => setTool("pen");
 $("eraser").onclick = () => setTool("eraser");
 $("undo").onclick = () => { const s = strokes.pop(); if (s) redoStack.push(s); redraw(); };
 $("redo").onclick = () => { const s = redoStack.pop(); if (s) strokes.push(s); redraw(); };
-$("clear").onclick = () => { strokes = []; redoStack = []; redraw(); hideReport(); };
+$("clear").onclick = () => { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); };
 $("next").onclick = () => { if (!judging) loadQuestion(); };
 $("goNext").onclick = () => { if (!judging) loadQuestion(); };
-$("retry").onclick = () => { if (!judging) { strokes = []; redoStack = []; redraw(); hideReport(); } };
+$("retry").onclick = () => { if (!judging) { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); } };
 
 function showError(msg) {
   const e = $("errbox"); e.textContent = msg; e.style.display = "block";
@@ -228,7 +237,7 @@ function hideReport() {
 }
 
 async function loadQuestion() {
-  hideReport(); strokes = []; redoStack = []; redraw();
+  hideReport(); strokes = []; redoStack = []; lastSubmittedImg = null; redraw();
   q = await (await fetch("/api/question")).json();
   $("qName").textContent = q.name;
   $("qCat").textContent = "JIS C 0303\n" + q.category;
@@ -281,12 +290,19 @@ $("judge").onclick = async () => {
   if (judging || !q) return;
   const img = exportImage();
   if (!img) { showError("何か描いてから判定してください"); return; }
+  if (img === lastSubmittedImg) {
+    showError("前回から描画が変わっていません。修正してから判定してください");
+    return;
+  }
 
   const judgingSymbolId = q.id;
   lastImg = img;
   const btn = $("judge");
+  const spinner = document.createElement("span");
+  spinner.className = "judge-spinner";
   setBusy(true);
-  btn.textContent = "判定中…";
+  btn.setAttribute("aria-busy", "true");
+  btn.replaceChildren(spinner, document.createTextNode("判定中…"));
   $("errbox").style.display = "none";
   try {
     const res = await fetch("/api/judge", {
@@ -300,11 +316,13 @@ $("judge").onclick = async () => {
     }
     const result = await res.json();
     if (result.symbol_id !== judgingSymbolId) throw new Error("response symbol mismatch");
+    lastSubmittedImg = img;
     render(result);
   } catch (e) {
     showError("判定結果を受信できませんでした。通信状態を確認して再試行してください。");
   } finally {
     setBusy(false);
+    btn.removeAttribute("aria-busy");
     btn.replaceChildren();
     const icon = document.createElement("span");
     icon.className = "material-symbols-outlined";
