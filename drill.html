@@ -67,6 +67,34 @@
   .compare .cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; background: #fff; }
   .compare img, .compare svg { width: 100%; height: 100%; object-fit: contain; padding: 10px; }
 
+  .checklist-toggle {
+    border-bottom: 1px solid var(--line);
+  }
+  .checklist-toggle summary {
+    list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    background: var(--primary-tint);
+    color: var(--primary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .checklist-toggle summary::-webkit-details-marker { display: none; }
+  .checklist-toggle summary::after {
+    content: "expand_more";
+    font-family: "Material Symbols Outlined";
+    font-size: 20px;
+    font-weight: normal;
+    line-height: 1;
+  }
+  .checklist-toggle[open] summary::after { content: "expand_less"; }
+  .checklist-summary {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--on-surface-variant);
+    letter-spacing: .04em;
+  }
   .check { display: flex; gap: 12px; padding: 13px 14px; align-items: flex-start; border-bottom: 1px solid var(--line); }
   .check .mark {
     width: 22px; flex: none;
@@ -145,8 +173,10 @@
       <div class="cell"><div id="refSvg"></div></div>
     </figure>
   </div>
-  <p class="label-caps section-head">Checklist Criteria</p>
-  <div id="checks"></div>
+  <details class="checklist-toggle" id="checklistToggle">
+    <summary><span class="label-caps">Checklist Criteria</span><span class="checklist-summary" id="checklistSummary"></span></summary>
+    <div id="checks"></div>
+  </details>
   <div id="mistakes"></div>
   <p class="obs"><span class="material-symbols-outlined">info</span><span id="obs"></span></p>
   <p class="disclaimer">AIによる練習用チェックです。図記号としての正しさは保証しません。正式には JIS C 0303 を確認してください。</p>
@@ -355,6 +385,10 @@ function render(r) {
   }
 
   const checks = $("checks");
+  const checklistToggle = $("checklistToggle");
+  const failedChecks = r.checks.filter(item => !item.ok).length;
+  $("checklistSummary").textContent = failedChecks ? `NG ${failedChecks}/${r.checks.length}` : `OK ${r.checks.length}/${r.checks.length}`;
+  checklistToggle.open = false;
   checks.replaceChildren();
   for (const item of r.checks) {
     const row = document.createElement("div");
