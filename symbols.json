@@ -1,5 +1,5 @@
 {
-  "_note": "JIS C 0303:2000 の図記号スクショ(2026-07-22 照合)に基づく。features は手描き画像に対し true/false で判定できる文のみ。",
+  "_note": "JIS C 0303:2000 の図記号スクショ(2026-07-22 照合)に基づく。features は表示用の短い説明、required_features は判定用の正本として扱う。将来的には features を required_features から生成するなど、手動二重管理を避ける構造へ移行する。",
   "symbols": [
     {
       "id": "earth",
