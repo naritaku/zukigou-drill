@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配線用図記号ドリル — 指で描いてAI判定</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block" rel="stylesheet">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="配線用図記号ドリル">
+<meta property="og:title" content="配線用図記号ドリル">
+<meta property="og:description" content="JIS C 0303「構内電気設備の配線用図記号」を指で描いて練習。AIによる判定を楽しみながら、自然と図記号を覚えられるドリル。ログイン不要。">
+<meta property="og:url" content="__BASE_URL__">
+<meta property="og:image" content="__BASE_URL__og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  body { padding: 24px 16px 96px; }
+
+  .hero { padding: 18px 16px 16px; }
+  .hero h1 {
+    font-size: 26px; font-weight: 700; color: var(--primary);
+    padding-bottom: 12px; border-bottom: 2px solid var(--primary);
+    margin-bottom: 12px; letter-spacing: .02em;
+  }
+  .hero p { font-size: 13.5px; line-height: 1.8; color: var(--on-surface); word-break: auto-phrase; }
+  .hero p .nb { white-space: nowrap; }
+
+  .meta {
+    display: flex; align-items: flex-start; gap: 8px;
+    margin: 18px 2px 26px; color: var(--on-surface-variant);
+    font-size: 12.5px; line-height: 1.7;
+  }
+  .meta .material-symbols-outlined { font-size: 18px; color: var(--primary); }
+  .meta .nb { white-space: nowrap; }
+
+  .steps-title {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--primary); margin-bottom: 10px;
+  }
+  .steps-title::before { content: ""; width: 4px; height: 14px; background: var(--primary); }
+  .step {
+    display: flex; align-items: center; gap: 12px;
+    padding: 15px 14px; margin-bottom: 8px;
+  }
+  .step .num { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--primary); width: 2.2em; }
+  .step b { font-size: 14.5px; flex: 1; }
+  .step .material-symbols-outlined { color: var(--primary); }
+
+  .cta { width: 100%; margin-top: 24px; font-size: 14px; }
+
+  .foot {
+    margin-top: 22px; text-align: center;
+    font-size: 11px; line-height: 1.9; color: var(--on-surface-variant);
+    word-break: auto-phrase;
+  }
+  .foot .nb { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="card hero">
+  <h1>配線用図記号ドリル</h1>
+  <p><span class="nb">JIS C 0303</span>「構内電気設備の配線用図記号」を、指で描いて練習。AIによる判定を楽しみながら、自然と役割や図記号を覚えましょう！</p>
+</div>
+
+<div class="meta">
+  <span class="material-symbols-outlined">info</span>
+  <span id="metaText">収録記号を読み込み中…</span>
+</div>
+
+<div class="steps-title"><span class="label-caps">Operational Steps</span></div>
+<div class="card step"><span class="num">01.</span><b>出題</b><span class="material-symbols-outlined">quiz</span></div>
+<div class="card step"><span class="num">02.</span><b>指で描く</b><span class="material-symbols-outlined">stylus_note</span></div>
+<div class="card step"><span class="num">03.</span><b>AIが特徴ごとに判定</b><span class="material-symbols-outlined">analytics</span></div>
+
+<a class="btn btn-primary cta" href="/drill">練習をはじめる<span class="material-symbols-outlined" style="font-size:18px">play_arrow</span></a>
+
+<p class="foot">
+  AI による練習支援です。正式な確認は <span class="nb">JIS C 0303 規格票</span>を参照してください。<br>
+  描いた画像は、個人に紐づかない形で <span class="nb">Gemini API</span> に送信・保存されます。
+</p>
+
+<nav class="bottomnav">
+  <a class="tab" href="/standards"><span class="material-symbols-outlined">menu_book</span><span class="label-caps">Standards</span></a>
+  <a class="tab active" href="/drill"><span class="material-symbols-outlined">exercise</span><span class="label-caps">Training</span></a>
+  <a class="tab" href="#" onclick="return false"><span class="material-symbols-outlined">history</span><span class="label-caps">History</span><span class="soon">COMING SOON</span></a>
+</nav>
+
+<script>
+fetch('/api/symbols').then(r=>r.json()).then(list=>{
+  const v = list.filter(s=>s.verified);
+  const cats = [...new Set(v.map(s=>s.category))];
+  const catHtml = cats.map(c=>`<span class="nb">${c}</span>`).join('・');
+  document.getElementById('metaText').innerHTML =
+    `<span class="nb">収録 ${v.length}記号</span> / ${catHtml}`;
+}).catch(()=>{ document.getElementById('metaText').textContent = '収録記号'; });
+</script>
+</body>
+</html>

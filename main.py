@@ -1,0 +1,468 @@
+"""検図 KENZU — 電気通信施工管理 第二次検定 図記号手描き判定。
+
+Gemini は画像内の特徴観察のみを担当し、合否はアプリケーションコードで決定する。
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import datetime
+import io
+import json
+import logging
+import os
+import random
+import threading
+import time
+import uuid
+from collections import defaultdict, deque
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from google import genai
+from google.genai import types
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+ROOT = Path(__file__).resolve().parent
+logger = logging.getLogger("kenzu")
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
+MAX_IMAGE_B64_CHARS = int(os.environ.get("MAX_IMAGE_B64_CHARS", "1500000"))
+MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", "1000000"))
+# 送信前に許容する画像の最長辺(px)。これを超えたらサーバー側で縮小してから判定する。
+MAX_IMAGE_DIM = int(os.environ.get("MAX_IMAGE_DIM", "1024"))
+MAX_OBSERVATION_CHARS = 500
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
+RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
+
+
+def _load_symbols() -> dict[str, dict[str, Any]]:
+    try:
+        payload = json.loads((ROOT / "symbols.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("symbols.json could not be loaded") from exc
+
+    symbols = payload.get("symbols")
+    if not isinstance(symbols, list) or not symbols:
+        raise RuntimeError("symbols.json must contain a non-empty symbols array")
+
+    result: dict[str, dict[str, Any]] = {}
+    for index, symbol in enumerate(symbols):
+        if not isinstance(symbol, dict):
+            raise RuntimeError(f"symbols[{index}] must be an object")
+        symbol_id = symbol.get("id")
+        required_features = symbol.get("required_features", symbol.get("features"))
+        forbidden_features = symbol.get("forbidden_features", [])
+        confusable_symbols = symbol.get("confusable_symbols", [])
+        if not isinstance(symbol_id, str) or not symbol_id:
+            raise RuntimeError(f"symbols[{index}].id is invalid")
+        if symbol_id in result:
+            raise RuntimeError(f"duplicate symbol id: {symbol_id}")
+        if not isinstance(required_features, list) or not required_features or not all(isinstance(v, str) and v for v in required_features):
+            raise RuntimeError(f"symbol {symbol_id} must have non-empty required_features")
+        if not isinstance(forbidden_features, list) or not all(isinstance(v, str) and v for v in forbidden_features):
+            raise RuntimeError(f"symbol {symbol_id} has invalid forbidden_features")
+        if not isinstance(confusable_symbols, list) or not all(isinstance(v, str) and v for v in confusable_symbols):
+            raise RuntimeError(f"symbol {symbol_id} has invalid confusable_symbols")
+        result[symbol_id] = symbol
+
+    if not any(bool(symbol.get("verified")) for symbol in result.values()):
+        raise RuntimeError("at least one verified symbol is required")
+    return result
+
+
+SYMBOLS = _load_symbols()
+_client: genai.Client | None = None
+_storage_client: Any = None
+_client_lock = threading.Lock()
+_storage_lock = threading.Lock()
+
+
+def _get_genai_client() -> genai.Client:
+    global _client
+    if _client is not None:
+        return _client
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "judgment service is not configured")
+    with _client_lock:
+        if _client is None:
+            _client = genai.Client(api_key=api_key)
+    return _client
+
+
+def _decode_png(image_b64: str) -> bytes:
+    if len(image_b64) > MAX_IMAGE_B64_CHARS:
+        raise HTTPException(413, "image too large")
+
+    raw = image_b64.split(",", 1)[-1]
+    try:
+        image = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(400, "invalid base64 image") from exc
+
+    if not image:
+        raise HTTPException(400, "empty image")
+    if len(image) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "image too large")
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "PNG image required")
+    return _downscale_png(image)
+
+
+def _downscale_png(image: bytes) -> bytes:
+    """最長辺が MAX_IMAGE_DIM を超える画像を、判定に送る前に縮小する。
+
+    クライアントは通常 512px 程度に正規化して送るが、それを信頼せず
+    サーバー側でも上限を保証する安全策。縮小に失敗しても判定は継続する
+    (元画像をそのまま返す)。
+    """
+    try:
+        with Image.open(io.BytesIO(image)) as img:
+            img.load()
+            longest = max(img.size)
+            if longest <= MAX_IMAGE_DIM:
+                return image
+            scale = MAX_IMAGE_DIM / longest
+            new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+            # 透過があれば白背景に合成してから縮小(手描き線が黒背景に潰れるのを防ぐ)
+            if img.mode in ("RGBA", "LA", "P"):
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                flat = Image.alpha_composite(bg, rgba).convert("RGB")
+            else:
+                flat = img.convert("RGB")
+            resized = flat.resize(new_size, Image.LANCZOS)
+            out = io.BytesIO()
+            resized.save(out, format="PNG", optimize=True)
+            return out.getvalue()
+    except Exception:
+        logger.warning("image downscale failed; sending original")
+        return image
+
+
+def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> None:
+    """明示的な異議報告だけを匿名保存する。失敗は判定処理に波及させない。"""
+    global _storage_client
+    if not FEEDBACK_BUCKET:
+        return
+    try:
+        if _storage_client is None:
+            with _storage_lock:
+                if _storage_client is None:
+                    from google.cloud import storage
+
+                    _storage_client = storage.Client()
+        bucket = _storage_client.bucket(FEEDBACK_BUCKET)
+        day = datetime.date.today().isoformat()
+        name = f"disputed/{symbol_id}/{day}/{uuid.uuid4().hex}"
+        bucket.blob(f"{name}.png").upload_from_string(image, content_type="image/png")
+        bucket.blob(f"{name}.json").upload_from_string(
+            json.dumps(judgment, ensure_ascii=False), content_type="application/json"
+        )
+    except Exception:
+        logger.exception("failed to save disputed feedback", extra={"symbol_id": symbol_id})
+
+
+app = FastAPI(title="KENZU", docs_url=None, redoc_url=None)
+
+
+def _page(name: str, request: Request) -> HTMLResponse:
+    html = (ROOT / name).read_text(encoding="utf-8")
+    return HTMLResponse(html.replace("__BASE_URL__", str(request.base_url)))
+
+
+@app.exception_handler(404)
+async def not_found(request: Request, exc: Exception) -> HTMLResponse:
+    del request, exc
+    html = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>404 — 配線用図記号ドリル</title><link rel="stylesheet" href="/theme.css"></head>
+<body style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;text-align:center">
+<div class="box" style="padding:28px 32px;max-width:340px"><p class="label-caps" style="color:var(--on-surface-variant);margin-bottom:10px">Sheet Not Found</p>
+<p style="font-size:44px;font-weight:700;color:var(--primary);font-family:var(--mono)">404</p>
+<p style="font-size:13px;color:var(--on-surface-variant);margin:12px 0 20px;line-height:1.7">この図面番号のページは存在しません。</p>
+<a class="btn btn-primary" href="/" style="display:inline-block;text-decoration:none">表紙へ戻る</a></div></body></html>"""
+    return HTMLResponse(html, status_code=404)
+
+
+_hits: dict[str, deque[float]] = defaultdict(deque)
+_hits_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    # Cloud Run 直公開では request.client.host を使う。X-Forwarded-For はクライアント偽装を避けるため参照しない。
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate(request: Request) -> None:
+    now = time.monotonic()
+    ip = _client_ip(request)
+    with _hits_lock:
+        queue = _hits[ip]
+        while queue and now - queue[0] > RATE_WINDOW:
+            queue.popleft()
+        if len(queue) >= RATE_LIMIT:
+            raise HTTPException(429, "しばらく待ってから再度お試しください")
+        queue.append(now)
+        # 長時間使われていないキーを定期的に掃除する。
+        if len(_hits) > 10_000:
+            stale = [key for key, values in _hits.items() if not values or now - values[-1] > RATE_WINDOW]
+            for key in stale[:5_000]:
+                _hits.pop(key, None)
+
+
+class JudgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol_id: str = Field(min_length=1, max_length=100)
+    image_b64: str = Field(min_length=1, max_length=MAX_IMAGE_B64_CHARS)
+
+
+class VisionResult(BaseModel):
+    model_config = ConfigDict(strict=True)
+    required: list[bool] = Field(default_factory=list)
+    forbidden: list[bool] = Field(default_factory=list)
+    confusions: list[bool] = Field(default_factory=list)
+    observation: str = Field(default="", max_length=MAX_OBSERVATION_CHARS)
+
+    @staticmethod
+    def _at(values: list[bool], index: int) -> bool:
+        return values[index] if 0 <= index < len(values) else False
+
+
+class ReportCheck(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    feature: str = Field(min_length=1, max_length=300)
+    ok: bool
+
+
+class ReportJudgment(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    passed: bool
+    checks: list[ReportCheck] = Field(max_length=50)
+    mistakes: list[str] = Field(default_factory=list, max_length=50)
+    observation: str = Field(default="", max_length=MAX_OBSERVATION_CHARS)
+
+    @field_validator("mistakes")
+    @classmethod
+    def validate_mistakes(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 300 for value in values):
+            raise ValueError("invalid mistake")
+        return values
+
+
+class ReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol_id: str = Field(min_length=1, max_length=100)
+    image_b64: str = Field(min_length=1, max_length=MAX_IMAGE_B64_CHARS)
+    judgment: ReportJudgment
+
+
+@app.get("/")
+def landing(request: Request) -> HTMLResponse:
+    return _page("landing.html", request)
+
+
+@app.get("/og.png")
+def og() -> FileResponse:
+    return FileResponse(ROOT / "og.png", media_type="image/png")
+
+
+@app.get("/favicon.ico")
+def favicon() -> FileResponse:
+    return FileResponse(ROOT / "favicon.ico", media_type="image/x-icon")
+
+
+@app.get("/favicon-32.png")
+def favicon32() -> FileResponse:
+    return FileResponse(ROOT / "favicon-32.png", media_type="image/png")
+
+
+@app.get("/apple-touch-icon.png")
+def apple_icon() -> FileResponse:
+    return FileResponse(ROOT / "apple-touch-icon.png", media_type="image/png")
+
+
+@app.get("/theme.css")
+def theme() -> FileResponse:
+    return FileResponse(ROOT / "theme.css", media_type="text/css")
+
+
+@app.get("/drill")
+def drill(request: Request) -> HTMLResponse:
+    return _page("drill.html", request)
+
+
+@app.get("/standards")
+def standards(request: Request) -> HTMLResponse:
+    return _page("standards.html", request)
+
+
+@app.get("/api/catalog")
+def catalog() -> list[dict[str, Any]]:
+    """解説ページ用: 収録記号の全情報(お手本SVG・解説・判定ポイント)"""
+    return [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "category": s["category"],
+            "description": s.get("description", ""),
+            "ref_svg": s.get("ref_svg", ""),
+            "required_features": s.get("required_features", []),
+            "common_mistakes": s.get("common_mistakes", []),
+        }
+        for s in SYMBOLS.values() if s["verified"]
+    ]
+
+
+@app.get("/api/symbols")
+def list_symbols() -> list[dict[str, Any]]:
+    return [
+        {"id": s["id"], "name": s["name"], "category": s["category"], "verified": s["verified"]}
+        for s in SYMBOLS.values()
+    ]
+
+
+@app.get("/api/question")
+def question() -> dict[str, Any]:
+    pool = [symbol for symbol in SYMBOLS.values() if symbol["verified"]]
+    symbol = random.choice(pool)
+    return {"id": symbol["id"], "name": symbol["name"], "category": symbol["category"]}
+
+
+@app.post("/api/judge")
+def judge(req: JudgeRequest, request: Request) -> dict[str, Any]:
+    _check_rate(request)
+    symbol = SYMBOLS.get(req.symbol_id)
+    if not symbol:
+        raise HTTPException(404, "unknown symbol")
+    image = _decode_png(req.image_b64)
+
+    required_features: list[str] = symbol.get("required_features", symbol["features"])
+    forbidden_features: list[str] = symbol.get("forbidden_features", [])
+    confusable_symbols: list[str] = symbol.get("confusable_symbols", [])
+
+    prompt = f"""あなたは施工図の図記号を厳密に識別する採点補助です。
+画像は受験者が手描きした電気設備の図記号で、課題は「{symbol['name']}」です。
+
+判定方針:
+- 線の多少の歪み、傾き、太さ、位置ずれは許容する。
+- ただし、本数、接続関係、貫通、内外、塗りつぶし、文字、方向など、記号を識別する位相的特徴は厳密に判定する。
+- 見えない特徴を推測で true にしない。
+- 対象記号らしく見えても、禁止特徴または類似記号の決定的特徴があれば明示する。
+- 各項目を独立に評価し、指定JSON以外を返さない。
+- required/forbidden/confusions は、下記の各番号(0,1,2...)に対応する true/false を、その順序どおりに並べた配列で返す。
+
+必須特徴(required): 画像に存在すれば true
+{json.dumps({str(i): f for i, f in enumerate(required_features)}, ensure_ascii=False, indent=2)}
+
+禁止特徴(forbidden): 画像に存在すれば true。1つでも true なら不合格
+{json.dumps({str(i): f for i, f in enumerate(forbidden_features)}, ensure_ascii=False, indent=2)}
+
+類似記号(confusions): 画像がその記号の決定的特徴を持ち、課題よりその記号に見える場合 true
+{json.dumps({str(i): name for i, name in enumerate(confusable_symbols)}, ensure_ascii=False, indent=2)}
+
+observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
+
+    try:
+        response = _get_genai_client().models.generate_content(
+            model=MODEL,
+            contents=[types.Part.from_bytes(data=image, mime_type="image/png"), prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=VisionResult,
+                temperature=0.0,
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Gemini request failed", extra={"symbol_id": req.symbol_id})
+        raise HTTPException(503, "judgment service unavailable") from exc
+
+    try:
+        result = VisionResult.model_validate_json(response.text or "")
+    except ValidationError as exc:
+        logger.warning("invalid Gemini response", extra={"symbol_id": req.symbol_id})
+        raise HTTPException(502, "invalid vision response") from exc
+
+    checks: list[dict[str, Any]] = []
+    for index, feature in enumerate(required_features):
+        checks.append({"feature": f"必須: {feature}", "ok": result._at(result.required, index)})
+    for index, feature in enumerate(forbidden_features):
+        checks.append({"feature": f"除外: {feature}がない", "ok": not result._at(result.forbidden, index)})
+    for index, name in enumerate(confusable_symbols):
+        checks.append({"feature": f"識別: {name}の決定的特徴ではない", "ok": not result._at(result.confusions, index)})
+
+    failed_required = [
+        feature for index, feature in enumerate(required_features)
+        if not result._at(result.required, index)
+    ]
+    hit_forbidden = [
+        feature for index, feature in enumerate(forbidden_features)
+        if result._at(result.forbidden, index)
+    ]
+    hit_confusions = [
+        name for index, name in enumerate(confusable_symbols)
+        if result._at(result.confusions, index)
+    ]
+    mistakes = [f"必須特徴が不足: {value}" for value in failed_required]
+    mistakes += [f"対象外の特徴を検出: {value}" for value in hit_forbidden]
+    mistakes += [f"{value}と判別できない可能性があります" for value in hit_confusions]
+
+    n_ok = sum(check["ok"] for check in checks)
+    return {
+        "symbol_id": req.symbol_id,
+        "passed": n_ok == len(checks),
+        "score": f"{n_ok}/{len(checks)}",
+        "checks": checks,
+        "mistakes": mistakes,
+        "observation": result.observation,
+        "ref_svg": symbol.get("ref_svg", ""),
+    }
+
+
+@app.post("/api/report")
+def report(req: ReportRequest, request: Request) -> dict[str, bool]:
+    _check_rate(request)
+    symbol = SYMBOLS.get(req.symbol_id)
+    if not symbol:
+        raise HTTPException(404, "unknown symbol")
+    image = _decode_png(req.image_b64)
+
+    expected_features = [f"必須: {value}" for value in symbol.get("required_features", symbol["features"])]
+    expected_features += [f"除外: {value}がない" for value in symbol.get("forbidden_features", [])]
+    expected_features += [f"識別: {value}の決定的特徴ではない" for value in symbol.get("confusable_symbols", [])]
+    received_features = [check.feature for check in req.judgment.checks]
+    if received_features != expected_features:
+        raise HTTPException(400, "judgment does not match symbol")
+
+    judgment = req.judgment.model_dump()
+    judgment.update(
+        {
+            "disputed": True,
+            "symbol_id": req.symbol_id,
+            "date": datetime.date.today().isoformat(),
+        }
+    )
+    _save_feedback(req.symbol_id, image, judgment)
+    return {"ok": True}
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, bool]:
+    return {"ok": True}
+
+
+@app.get("/readyz")
+def readyz() -> dict[str, Any]:
+    if not SYMBOLS:
+        raise HTTPException(503, "no symbols loaded")
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise HTTPException(503, "Gemini is not configured")
+    return {"ok": True, "symbols": len(SYMBOLS), "feedback_enabled": bool(FEEDBACK_BUCKET)}

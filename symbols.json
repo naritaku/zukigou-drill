@@ -1,0 +1,719 @@
+{
+  "_note": "JIS C 0303:2000 の図記号スクショ(2026-07-22 照合)に基づく。features は手描き画像に対し true/false で判定できる文のみ。",
+  "symbols": [
+    {
+      "id": "earth",
+      "name": "接地極",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "縦線(引出線)が1本、上から下へ伸びている",
+        "縦線の下端に水平線が3本、下に行くほど短く描かれている",
+        "水平線は縦線と直角に交わっており、丸や矢印は付いていない"
+      ],
+      "common_mistakes": [
+        "水平線の本数が3本でない",
+        "水平線の長さが同じ(逓減していない)"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='50' y1='14' x2='50' y2='52'/><line x1='28' y1='52' x2='72' y2='52'/><line x1='36' y1='63' x2='64' y2='63'/><line x1='44' y1='74' x2='56' y2='74'/></svg>",
+      "required_features": [
+        "縦線が1本、上から下へ描かれている",
+        "縦線の下端に水平線が3本描かれている",
+        "水平線は下に行くほど短くなっている"
+      ],
+      "forbidden_features": [
+        "水平線の本数が3本以外である",
+        "水平線がほぼ同じ長さである",
+        "縦線の先端に丸や矢印が付いている"
+      ],
+      "confusable_symbols": [],
+      "description": "機器や盤を大地に接続するための電極。感電防止と電位の安定のため、接地系統の末端に設ける。接地種別はEA〜EDを傍記する。"
+    },
+    {
+      "id": "tv_antenna",
+      "name": "テレビジョンアンテナ",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "水平な線(素子)が上部に1本描かれている",
+        "水平線の中央から垂直な線(支持線)が下へ伸びている",
+        "全体としてT字形であり、Y字形(斜めに開く素子)ではない"
+      ],
+      "common_mistakes": [
+        "素子を斜め上に開くY字形で描いてしまう",
+        "パラボラアンテナ(弧)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='20' y1='22' x2='80' y2='22'/><line x1='50' y1='22' x2='50' y2='86'/></svg>",
+      "required_features": [
+        "水平な線が1本描かれている",
+        "水平線の中央から垂直な線が下へ伸びている",
+        "全体がT字形になっている"
+      ],
+      "forbidden_features": [
+        "素子が斜め上に開くY字形である",
+        "弧(曲線)が描かれている"
+      ],
+      "confusable_symbols": [
+        "パラボラアンテナ"
+      ],
+      "description": "地上波テレビ放送を受信するアンテナ。種類を示す場合はVHF・UHFや素子数を傍記する。"
+    },
+    {
+      "id": "parabolic_antenna",
+      "name": "パラボラアンテナ",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "弧(皿状の反射面)が描かれている",
+        "弧の開口側に給電部(斜線の入った小さな箱)が描かれている",
+        "T字形のテレビアンテナではない"
+      ],
+      "common_mistakes": [
+        "テレビジョンアンテナ(T字)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M30 30 A 20 20 0 0 1 30 70'/><polyline points='50,40 90,40 90,60 50,60'/><line x1='50' y1='40' x2='90' y2='60'/></svg>",
+      "required_features": [
+        "左に開いた半円(弧)が描かれている",
+        "半円の弧の頂点が、横長の四角形の左側(開いた辺)に接している",
+        "四角形は上辺・右辺・下辺の3辺で描かれ、内部に左上から右下への斜線(＼)が1本ある"
+      ],
+      "forbidden_features": [
+        "全体がT字形である",
+        "四角形が4辺で完全に閉じている",
+        "弧が右に開いている"
+      ],
+      "confusable_symbols": [
+        "テレビジョンアンテナ"
+      ],
+      "description": "BS・CSなどの衛星放送を受信する反射鏡付きアンテナ。種類はBS、CSを傍記する。"
+    },
+    {
+      "id": "mixer",
+      "name": "混合・分波器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "円が描かれている",
+        "円の片側に2本の線が接続されている",
+        "円の反対側に1本の線が接続されている"
+      ],
+      "common_mistakes": [
+        "分配器・分岐器と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><circle cx='50' cy='50' r='18'/><line x1='14' y1='34.4' x2='41.0' y2='34.4'/><line x1='14' y1='65.6' x2='41.0' y2='65.6'/><line x1='68' y1='50' x2='90' y2='50'/><line x1='41.0' y1='34.4' x2='68' y2='50'/><line x1='41.0' y1='65.6' x2='68' y2='50'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の左側に上下2本、右側に1本の水平線が接続されている",
+        "円の内部で、左の2つの接点から右の接点へ向かう2本の線が結ばれている"
+      ],
+      "forbidden_features": [
+        "円の内部に線がない",
+        "三角形が円の外側に描かれている",
+        "左右の線の本数が逆(左1本・右2本)である"
+      ],
+      "confusable_symbols": [
+        "1分岐器",
+        "2分配器"
+      ],
+      "description": "複数帯域の受信信号を1本にまとめる(混合)、または帯域ごとに分ける(分波)機器。アンテナ直下などに設ける。"
+    },
+    {
+      "id": "amplifier",
+      "name": "増幅器(ブースタ)",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "主要素が三角形(塗りつぶしなし)である",
+        "三角形の頂点が信号の流れる方向(入力から出力へ)を向いている",
+        "入力側と出力側に引出線(信号線)が描かれている"
+      ],
+      "common_mistakes": [
+        "三角形の向きが逆",
+        "アッテネータ(円+斜め矢印)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><line x1='8' y1='50' x2='34' y2='50'/><polygon points='34,28 34,72 68,50'/><line x1='68' y1='50' x2='92' y2='50'/></svg>",
+      "required_features": [
+        "塗りつぶしのない三角形が描かれている",
+        "三角形の頂点が横方向(信号の進む向き)を向いている",
+        "三角形の入力側と出力側に水平の引出線がある"
+      ],
+      "forbidden_features": [
+        "三角形が円の内部にある",
+        "円に斜めの矢印が重なっている",
+        "三角形が塗りつぶされている"
+      ],
+      "confusable_symbols": [
+        "アッテネータ",
+        "スピーカ"
+      ],
+      "description": "伝送で減衰した信号レベルを増幅する機器。テレビ共聴の幹線系に設けブースタとも呼ぶ。"
+    },
+    {
+      "id": "tap_off_1",
+      "name": "1分岐器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "幹線(直線)が円を貫通して直進している",
+        "円から分岐線が1本、幹線と直角方向に出ている",
+        "幹線は円の先でも続いている(円で終わっていない)"
+      ],
+      "common_mistakes": [
+        "分配器(幹線が円で終わる)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='10' y1='44' x2='90' y2='44'/><circle cx='50' cy='44' r='13'/><line x1='50' y1='57' x2='50' y2='86'/></svg>",
+      "required_features": [
+        "1本の直線(幹線)が円を貫通し、円の両側に伸びている",
+        "円から幹線と直角方向に分岐線が1本出ている",
+        "円に接続する線は合計3本である"
+      ],
+      "forbidden_features": [
+        "幹線が円で途切れている",
+        "分岐線が2本以上ある",
+        "円の中心に塗りつぶした点がある"
+      ],
+      "confusable_symbols": [
+        "2分配器",
+        "混合・分波器"
+      ],
+      "description": "幹線から信号の一部を取り出して分岐する機器。幹線はこの先へ続く。分岐数により1・2・4分岐器がある。"
+    },
+    {
+      "id": "distributor_2way",
+      "name": "2分配器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "入力線が1本、円に接続されて終わっている(貫通していない)",
+        "円から出力線が2本出ている",
+        "入力と出力で合計3本の線が円に接続されている"
+      ],
+      "common_mistakes": [
+        "分岐器(幹線が円を貫通する)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='52' cy='50' r='13'/><line x1='18' y1='50' x2='39' y2='50'/><line x1='52' y1='37' x2='52' y2='18'/><line x1='52' y1='63' x2='52' y2='82'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の片側に水平の入力線が1本接続されている",
+        "円から入力と直角方向に出力線が2本(上下)出ている"
+      ],
+      "forbidden_features": [
+        "幹線が円を貫通して反対側へ伸びている",
+        "円の中心に塗りつぶした点がある",
+        "出力線が1本しかない"
+      ],
+      "confusable_symbols": [
+        "1分岐器",
+        "混合・分波器"
+      ],
+      "description": "入力信号を等しいレベルで複数系統に分配する機器。幹線はここで終端する。分配数により2・4・6分配器がある。"
+    },
+    {
+      "id": "serial_unit",
+      "name": "直列ユニット(75Ω)",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "円が二重(外側の円と内側の円)に描かれている",
+        "中心に塗りつぶした点がある",
+        "引出線は必須ではなく、円が主要素である"
+      ],
+      "common_mistakes": [
+        "電話用アウトレット(一重の円+塗り点)と混同する",
+        "テレビ端子(線+小円)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='26'/><circle cx='50' cy='50' r='11'/></svg>",
+      "required_features": [
+        "円が二重(外側の円と内側の円)に描かれている",
+        "2つの円はほぼ同心に描かれている",
+        "内側の円の中心に塗りつぶした点が描かれていない"
+      ],
+      "forbidden_features": [
+        "中心に塗りつぶした点がある",
+        "円が一重である",
+        "円に長い引出線が付いている"
+      ],
+      "confusable_symbols": [
+        "通信用アウトレット(電話用)",
+        "情報用アウトレット(LAN)"
+      ],
+      "description": "各室で幹線から信号を取り出すテレビ受信用の端子ユニット。壁付は壁側を塗り、終端抵抗付はR、2端子は2を傍記する。"
+    },
+    {
+      "id": "speaker",
+      "name": "スピーカ",
+      "category": "放送設備",
+      "verified": true,
+      "features": [
+        "円が描かれている",
+        "円の内部に塗りつぶした三角形が描かれている",
+        "箱型(四角)ではない"
+      ],
+      "common_mistakes": [
+        "ホーン形スピーカ(小さな四角+開いた三角)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='28'/><polygon points='22.0,50.0 64.0,25.8 64.0,74.2'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の内部に三角形があり、3つの頂点が円周に接している(内接)",
+        "三角形は塗りつぶされていない"
+      ],
+      "forbidden_features": [
+        "円の中が×印である",
+        "三角形が塗りつぶされている",
+        "三角形が円の外側にあり引出線が付いている"
+      ],
+      "confusable_symbols": [
+        "アッテネータ",
+        "増幅器"
+      ],
+      "description": "放送設備の拡声出力。壁付は壁側を塗り、ホーン形スピーカは別の表記を用いる。防滴形はWPを傍記する。"
+    },
+    {
+      "id": "attenuator",
+      "name": "アッテネータ(減衰器)",
+      "category": "放送設備",
+      "verified": true,
+      "features": [
+        "円が描かれている",
+        "円を斜めに貫通する矢印が描かれている",
+        "増幅器のような三角形ではない"
+      ],
+      "common_mistakes": [
+        "増幅器(三角形)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><line x1='24' y1='78' x2='76' y2='26'/><polyline points='62,24 78,24 78,40'/><circle cx='50' cy='52' r='9'/></svg>",
+      "required_features": [
+        "左下から右上へ向かう斜めの矢印が描かれている",
+        "矢印の中ほどに小さな円が1つ重なっている",
+        "円の直径は矢印の長さより明らかに小さい"
+      ],
+      "forbidden_features": [
+        "三角形が描かれている",
+        "矢印がなく円だけである"
+      ],
+      "confusable_symbols": [
+        "増幅器",
+        "スピーカ"
+      ],
+      "description": "信号レベルを減衰させて調整する機器。過大入力の抑制やレベル合わせに用いる。"
+    },
+    {
+      "id": "telephone_outlet",
+      "name": "通信用アウトレット(電話用)",
+      "category": "電話設備",
+      "verified": true,
+      "features": [
+        "円が1重で描かれている",
+        "円の中心に塗りつぶした丸がある",
+        "中の要素は縦棒ではなく丸である"
+      ],
+      "common_mistakes": [
+        "情報用アウトレット(中が塗り縦棒)と混同する",
+        "直列ユニット(二重円)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='26'/><circle cx='50' cy='50' r='9' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "円が一重で描かれている",
+        "円の中心に塗りつぶした丸がある",
+        "塗りつぶされた部分の形は円形である"
+      ],
+      "forbidden_features": [
+        "円の中の塗りつぶしが縦長の棒である",
+        "円が二重である"
+      ],
+      "confusable_symbols": [
+        "情報用アウトレット(LAN)",
+        "直列ユニット(75Ω)"
+      ],
+      "description": "電話機を接続する通信用の差込口。壁付は壁側を塗り、コネクタ種類(8ピン等)を傍記できる。"
+    },
+    {
+      "id": "info_outlet",
+      "name": "情報用アウトレット(LAN)",
+      "category": "LAN・情報設備",
+      "verified": true,
+      "features": [
+        "円が描かれている",
+        "円の中央に塗りつぶした縦長の棒がある",
+        "中の要素は丸ではなく縦棒である"
+      ],
+      "common_mistakes": [
+        "電話用アウトレット(中が塗り丸)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='26'/><rect x='44' y='31' width='12' height='38' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の中央に塗りつぶした縦長の棒(長方形)がある",
+        "棒は上下方向に長い"
+      ],
+      "forbidden_features": [
+        "円の中の塗りつぶしが丸である",
+        "円の中に塗りつぶしがない"
+      ],
+      "confusable_symbols": [
+        "通信用アウトレット(電話用)",
+        "直列ユニット(75Ω)"
+      ],
+      "description": "LANなど情報配線の差込口。壁付は壁側を塗り、コネクタ種類(8P・光・BNC等)を傍記できる。"
+    },
+    {
+      "id": "router",
+      "name": "ルータ",
+      "category": "LAN・情報設備",
+      "verified": true,
+      "features": [
+        "長方形の枠が描かれている",
+        "枠の中にRTの文字が書かれている",
+        "枠の中の文字はHUBやTAではない"
+      ],
+      "common_mistakes": [
+        "集線装置(HUB)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><rect x='24' y='34' width='52' height='32'/><text x='50' y='58' text-anchor='middle' font-size='20' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>RT</text></svg>",
+      "required_features": [
+        "長方形の枠が描かれている",
+        "枠の中にRTと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "枠の中の文字がHUBである",
+        "枠の中に文字がない"
+      ],
+      "confusable_symbols": [
+        "集線装置(ハブ)"
+      ],
+      "description": "ネットワーク間の経路制御を行う装置。図記号は枠内にRT(「ルータ」と表記してもよい)。"
+    },
+    {
+      "id": "switching_hub",
+      "name": "集線装置(ハブ)",
+      "category": "LAN・情報設備",
+      "verified": true,
+      "features": [
+        "長方形の枠が描かれている",
+        "枠の中にHUBの文字が書かれている",
+        "枠の中の文字はRTではない"
+      ],
+      "common_mistakes": [
+        "ルータ(RT)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><rect x='20' y='34' width='60' height='32'/><text x='50' y='58' text-anchor='middle' font-size='18' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>HUB</text></svg>",
+      "required_features": [
+        "長方形の枠が描かれている",
+        "枠の中にHUBと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "枠の中の文字がRTである",
+        "枠の中に文字がない"
+      ],
+      "confusable_symbols": [
+        "ルータ"
+      ],
+      "description": "LAN配線を集約する集線装置。必要に応じてポート数を傍記する。"
+    },
+    {
+      "id": "protector",
+      "name": "保安器",
+      "category": "電話設備",
+      "verified": true,
+      "features": [
+        "四角形の枠が描かれている",
+        "枠の内部に向かい合う一対の接点(弧・半円状の要素)が描かれている",
+        "枠の中は文字ではない"
+      ],
+      "common_mistakes": [
+        "端子盤(枠+水平線)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><rect x='26' y='28' width='48' height='44'/><line x1='40' y1='38' x2='40' y2='62'/><path d='M40 50 q9 -9 0 -12 M40 50 q9 9 0 12' /><line x1='60' y1='38' x2='60' y2='62'/><path d='M60 50 q-9 -9 0 -12 M60 50 q-9 9 0 12'/></svg>",
+      "required_features": [
+        "四角形の枠が描かれている",
+        "枠の内部に、向かい合う一対の接点(弧・半円状の要素)が描かれている"
+      ],
+      "forbidden_features": [
+        "枠の中が文字である",
+        "枠の中が水平線1本だけである"
+      ],
+      "confusable_symbols": [
+        "端子盤",
+        "プルボックス"
+      ],
+      "description": "電話回線の引込点で、雷サージや電力線との混触から屋内設備を保護する装置。集合保安器は個数(実装/容量)を傍記する。"
+    },
+    {
+      "id": "terminal_board",
+      "name": "端子盤",
+      "category": "電話設備",
+      "verified": true,
+      "features": [
+        "長方形の枠が描かれている",
+        "枠の内部中央に短い水平線が1本描かれている",
+        "枠の中は文字や塗りつぶしではない"
+      ],
+      "common_mistakes": [
+        "保安器(枠+接点)と混同する",
+        "MDF/IDF(文字表記)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><rect x='26' y='34' width='48' height='32'/><line x1='38' y1='50' x2='62' y2='50'/></svg>",
+      "required_features": [
+        "長方形の枠が描かれている",
+        "枠の内部中央に短い水平線が1本描かれている"
+      ],
+      "forbidden_features": [
+        "枠の中が文字である",
+        "枠の中に向かい合う接点の対がある",
+        "枠の中に塗りつぶしがある"
+      ],
+      "confusable_symbols": [
+        "保安器",
+        "プルボックス"
+      ],
+      "description": "通信ケーブルを成端し、接続替えを行う盤。対数(実装/容量)を傍記する。電話・情報以外の端子盤にも適用する。"
+    },
+    {
+      "id": "distribution_board",
+      "name": "分電盤",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "横長の長方形が描かれている",
+        "長方形が対角線で二分されている",
+        "対角線の片側だけが塗りつぶされている"
+      ],
+      "common_mistakes": [
+        "配電盤(対角線2本・塗りなし)と混同する",
+        "制御盤(対向する2箇所を塗る)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='22' y='34' width='56' height='32'/><path d='M22 66 L78 66 L78 34 Z' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "横長の長方形の外枠がある",
+        "枠内に左下から右上へ向かう対角線(/)が1本ある",
+        "対角線より右下側の領域だけが塗りつぶされる"
+      ],
+      "forbidden_features": [
+        "枠内にX形の対角線が2本ある",
+        "塗りつぶしがない",
+        "対向する2領域が塗りつぶされる"
+      ],
+      "confusable_symbols": [
+        "配電盤",
+        "制御盤"
+      ],
+      "description": "幹線から各分岐回路へ電源を分配する盤。通信機器への給電元として系統図に登場する。"
+    },
+    {
+      "id": "switchboard",
+      "name": "配電盤",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "横長の長方形が描かれている",
+        "長方形の内部に対角線が2本(X形)描かれている",
+        "塗りつぶしがない"
+      ],
+      "common_mistakes": [
+        "分電盤(片側塗り)と混同する",
+        "制御盤(対向2箇所塗り)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='22' y='34' width='56' height='32'/><line x1='22' y1='34' x2='78' y2='66'/><line x1='78' y1='34' x2='22' y2='66'/></svg>",
+      "required_features": [
+        "横長の長方形の外枠がある",
+        "枠内に対角線が2本ありX形になる",
+        "内部に塗りつぶしがない"
+      ],
+      "forbidden_features": [
+        "対角線が1本だけである",
+        "内部の1領域または2領域が塗りつぶされる"
+      ],
+      "confusable_symbols": [
+        "分電盤",
+        "制御盤"
+      ],
+      "description": "受電・幹線系統の開閉と配電を行う盤。"
+    },
+    {
+      "id": "control_board",
+      "name": "制御盤",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "横長の長方形が描かれている",
+        "長方形の内部に対角線が2本(X形)描かれている",
+        "Xで分かれた対向する2箇所(左右)が塗りつぶされている"
+      ],
+      "common_mistakes": [
+        "配電盤(塗りなし)と混同する",
+        "分電盤(片側のみ塗り)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='22' y='34' width='56' height='32'/><line x1='22' y1='34' x2='78' y2='66'/><line x1='78' y1='34' x2='22' y2='66'/><path d='M22 34 L50 50 L22 66 Z' fill='#1a1c1e' stroke='none'/><path d='M78 34 L50 50 L78 66 Z' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "横長の長方形の外枠がある",
+        "枠内に対角線が2本ありX形になる",
+        "Xで分かれた左右の対向する2領域が塗りつぶされる"
+      ],
+      "forbidden_features": [
+        "内部に塗りつぶしがない",
+        "1領域だけが塗りつぶされる",
+        "上下の対向領域が塗りつぶされる"
+      ],
+      "confusable_symbols": [
+        "配電盤",
+        "分電盤"
+      ],
+      "description": "機器の運転・制御用の機器類を収めた盤。"
+    },
+    {
+      "id": "pull_box",
+      "name": "プルボックス",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "無地の正方形(または正方形に近い四角形)が描かれている",
+        "内部に斜線・塗りつぶし・文字がない",
+        "輪郭が閉じている"
+      ],
+      "common_mistakes": [
+        "ジョイントボックス(無地の正方形)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='27' y='27' width='46' height='46'/><line x1='27' y1='27' x2='73' y2='73'/><line x1='73' y1='27' x2='27' y2='73'/></svg>",
+      "required_features": [
+        "正方形(または正方形に近い四角形)が描かれている",
+        "正方形の内部に対角線が2本あり、X形になっている",
+        "内部に塗りつぶしがない"
+      ],
+      "forbidden_features": [
+        "内部が無地で対角線がない",
+        "対角線が1本だけである",
+        "内部が塗りつぶされている"
+      ],
+      "confusable_symbols": [
+        "端子盤",
+        "保安器",
+        "分電盤",
+        "配電盤",
+        "制御盤"
+      ],
+      "description": "電線・ケーブルの通線を容易にするための中継用ボックス。材料の種類や寸法を傍記する。"
+    },
+    {
+      "id": "joint_box",
+      "name": "ジョイントボックス",
+      "category": "共通・配線材料",
+      "verified": true,
+      "required_features": [
+        "正方形(または正方形に近い四角形)が描かれている",
+        "内部に対角線・塗りつぶし・文字がない",
+        "輪郭が閉じている"
+      ],
+      "forbidden_features": [
+        "内部にX形の対角線がある",
+        "内部が塗りつぶされている"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><rect x='27' y='27' width='46' height='46'/></svg>",
+      "common_mistakes": [
+        "プルボックス(正方形にX)と混同する"
+      ],
+      "description": "電線相互の接続部を収めるボックス。"
+    },
+    {
+      "id": "interphone_master",
+      "name": "電話機形インターホン親機",
+      "category": "インターホン",
+      "verified": true,
+      "required_features": [
+        "円が二重(外側の円と内側の円)に描かれている",
+        "円の中に小文字のtと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "円が一重である(子機)",
+        "文字が大文字のTである(電話機)"
+      ],
+      "common_mistakes": [
+        "電話機形インターホン子機(一重円+t)と混同する",
+        "加入電話機(二重円+T)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
+      "description": "建物内の相互通話を行うインターホンの親機(電話機形)。二重円で親機を表す。"
+    },
+    {
+      "id": "interphone_slave",
+      "name": "電話機形インターホン子機",
+      "category": "インターホン",
+      "verified": true,
+      "required_features": [
+        "円が一重で描かれている",
+        "円の中に小文字のtと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "円が二重である(親機)",
+        "文字が大文字のTである(電話機)"
+      ],
+      "common_mistakes": [
+        "電話機形インターホン親機(二重円+t)と混同する",
+        "内線電話機(一重円+T)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
+      "description": "インターホンの子機(電話機形)。一重円で子機を表す。"
+    },
+    {
+      "id": "naisen_phone",
+      "name": "内線電話機",
+      "category": "電話設備",
+      "verified": true,
+      "required_features": [
+        "円が一重で描かれている",
+        "円の中に大文字のTと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "円が二重である(加入電話機)",
+        "文字が小文字のtである(インターホン)"
+      ],
+      "common_mistakes": [
+        "加入電話機(二重円+T)と混同する",
+        "電話機形インターホン子機(一重円+t)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='60' text-anchor='middle' font-size='27' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
+      "description": "構内交換機(PBX)や主装置の配下で使う内線用電話機。ボタン電話機を示す場合はBTを傍記する。"
+    },
+    {
+      "id": "kanyu_phone",
+      "name": "加入電話機",
+      "category": "電話設備",
+      "verified": true,
+      "required_features": [
+        "円が二重(外側の円と内側の円)に描かれている",
+        "円の中に大文字のTと読める文字が書かれている"
+      ],
+      "forbidden_features": [
+        "円が一重である(内線電話機)",
+        "文字が小文字のtである(インターホン)"
+      ],
+      "common_mistakes": [
+        "内線電話機(一重円+T)と混同する",
+        "電話機形インターホン親機(二重円+t)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='60' text-anchor='middle' font-size='24' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
+      "description": "電気通信事業者の回線に直接接続する電話機。"
+    },
+    {
+      "id": "tv_tanshi",
+      "name": "テレビ端子",
+      "category": "テレビ共聴",
+      "verified": true,
+      "required_features": [
+        "水平の直線が1本描かれている",
+        "直線の端に小さな円(塗りつぶしなし)が接続されている"
+      ],
+      "forbidden_features": [
+        "円が二重である(直列ユニット)",
+        "円が塗りつぶされている",
+        "円の反対側にも線が伸びている"
+      ],
+      "common_mistakes": [
+        "直列ユニット(二重円)と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='14' y1='50' x2='62' y2='50'/><circle cx='72' cy='50' r='10'/></svg>",
+      "description": "テレビ受信機を接続する端子。2端子の場合は2を傍記する。"
+    }
+  ],
+  "_disclaimer": "本ルーブリックは練習支援用。AI判定は図記号としての正しさを保証しない。正式にはJIS C 0303規格票を確認のこと。"
+}
