@@ -34,6 +34,9 @@ MAX_IMAGE_B64_CHARS = int(os.environ.get("MAX_IMAGE_B64_CHARS", "1500000"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", "1000000"))
 # 送信前に許容する画像の最長辺(px)。これを超えたらサーバー側で縮小してから判定する。
 MAX_IMAGE_DIM = int(os.environ.get("MAX_IMAGE_DIM", "1024"))
+MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", "4000000"))
+MIN_INK_PIXELS = int(os.environ.get("MIN_INK_PIXELS", "20"))
+INK_THRESHOLD = int(os.environ.get("INK_THRESHOLD", "245"))
 MAX_OBSERVATION_CHARS = 500
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
@@ -112,38 +115,52 @@ def _decode_png(image_b64: str) -> bytes:
         raise HTTPException(413, "image too large")
     if not image.startswith(b"\x89PNG\r\n\x1a\n"):
         raise HTTPException(400, "PNG image required")
-    return _downscale_png(image)
+    return _validate_and_prepare_png(image)
 
 
-def _downscale_png(image: bytes) -> bytes:
-    """最長辺が MAX_IMAGE_DIM を超える画像を、判定に送る前に縮小する。
+def _validate_and_prepare_png(image: bytes) -> bytes:
+    """PNG を検証し、空画像・巨大画像を Gemini に送らない形に正規化する。
 
-    クライアントは通常 512px 程度に正規化して送るが、それを信頼せず
-    サーバー側でも上限を保証する安全策。縮小に失敗しても判定は継続する
-    (元画像をそのまま返す)。
+    クライアント側の 512px 正規化は UX 用の補助にすぎないため、課金と安全性の
+    境界はサーバー側で確定する。画像として壊れている、ピクセル数が多すぎる、
+    またはほぼ白紙のリクエストは外部 API 呼び出し前に拒否する。
     """
     try:
         with Image.open(io.BytesIO(image)) as img:
+            if img.format != "PNG":
+                raise HTTPException(400, "PNG image required")
+            if img.width <= 0 or img.height <= 0 or img.width * img.height > MAX_IMAGE_PIXELS:
+                raise HTTPException(413, "image too large")
             img.load()
-            longest = max(img.size)
-            if longest <= MAX_IMAGE_DIM:
-                return image
-            scale = MAX_IMAGE_DIM / longest
-            new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
-            # 透過があれば白背景に合成してから縮小(手描き線が黒背景に潰れるのを防ぐ)
-            if img.mode in ("RGBA", "LA", "P"):
-                rgba = img.convert("RGBA")
-                bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                flat = Image.alpha_composite(bg, rgba).convert("RGB")
-            else:
-                flat = img.convert("RGB")
-            resized = flat.resize(new_size, Image.LANCZOS)
+            flat = _flatten_image(img)
+            if _count_ink_pixels(flat) < MIN_INK_PIXELS:
+                raise HTTPException(400, "empty drawing")
+            longest = max(flat.size)
+            if longest > MAX_IMAGE_DIM:
+                scale = MAX_IMAGE_DIM / longest
+                new_size = (max(1, round(flat.width * scale)), max(1, round(flat.height * scale)))
+                flat = flat.resize(new_size, Image.LANCZOS)
             out = io.BytesIO()
-            resized.save(out, format="PNG", optimize=True)
+            flat.save(out, format="PNG", optimize=True)
             return out.getvalue()
-    except Exception:
-        logger.warning("image downscale failed; sending original")
-        return image
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.info("invalid PNG image rejected")
+        raise HTTPException(400, "invalid PNG image") from exc
+
+
+def _flatten_image(img: Image.Image) -> Image.Image:
+    if img.mode in ("RGBA", "LA", "P"):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(bg, rgba).convert("RGB")
+    return img.convert("RGB")
+
+
+def _count_ink_pixels(img: Image.Image) -> int:
+    gray = img.convert("L")
+    return sum(1 for value in gray.getdata() if value < INK_THRESHOLD)
 
 
 def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> None:

@@ -94,9 +94,8 @@
 fetch('/api/symbols').then(r=>r.json()).then(list=>{
   const v = list.filter(s=>s.verified);
   const cats = [...new Set(v.map(s=>s.category))];
-  const catHtml = cats.map(c=>`<span class="nb">${c}</span>`).join('・');
-  document.getElementById('metaText').innerHTML =
-    `<span class="nb">収録 ${v.length}記号</span> / ${catHtml}`;
+  document.getElementById('metaText').textContent =
+    `収録 ${v.length}記号 / ${cats.join('・')}`;
 }).catch(()=>{ document.getElementById('metaText').textContent = '収録記号'; });
 </script>
 </body>
