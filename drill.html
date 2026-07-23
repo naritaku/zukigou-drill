@@ -69,12 +69,12 @@
 
   .check { display: flex; gap: 12px; padding: 13px 14px; align-items: flex-start; border-bottom: 1px solid var(--line); }
   .check .mark {
-    width: 22px; height: 22px; flex: none; border-radius: 50%;
+    width: 22px; flex: none;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 13px; border: 2px solid;
+    font-weight: 800; font-size: 18px; line-height: 1;
   }
-  .check.ok .mark { color: var(--ok); border-color: var(--ok); }
-  .check.ng .mark { color: var(--ng); border-color: var(--ng); }
+  .check.ok .mark { color: var(--ok); }
+  .check.ng .mark { color: var(--ng); }
   .check span:last-child { font-size: 13px; line-height: 1.65; padding-top: 1px; }
   .mistake { font-size: 12.5px; color: var(--ng); padding: 10px 14px 0; }
   .obs {
