@@ -44,15 +44,21 @@ GEMINI_API_KEY="your-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 ## デプロイ (Cloud Run)
 
-```bash
-# シークレット登録(初回のみ)
-echo -n "your-key" | gcloud secrets create GEMINI_API_KEY --data-file=-
+デプロイは GitHub Actions の手動実行で行う。GitHub の **Actions → Deploy Cloud Run → Run workflow** を開き、`main` ブランチを選んで実行する。必要に応じて `gemini_model` と `max_instances` を入力する。
 
-gcloud run deploy zukigou-drill --source . \
-  --region asia-northeast1 \
-  --allow-unauthenticated \
-  --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest
+初回だけ、GitHub Actions から Google Cloud に認証するための事前設定が必要。Google Cloud 側で Secret Manager と Workload Identity Federation を設定し、GitHub リポジトリの **Settings → Secrets and variables → Actions → Variables** に次の Variables を登録する。
+
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`: Workload Identity Provider のリソース名
+- `GCP_SERVICE_ACCOUNT`: デプロイ用サービスアカウントのメールアドレス
+
+例:
+
+```text
+GCP_WORKLOAD_IDENTITY_PROVIDER=projects/123456789/locations/global/workloadIdentityPools/github/providers/github-repo
+GCP_SERVICE_ACCOUNT=github-actions-deployer@zukigou-drill-dojo.iam.gserviceaccount.com
 ```
+
+`GEMINI_API_KEY` は GitHub Secrets ではなく Google Cloud Secret Manager の `GEMINI_API_KEY` に登録しておく。workflow はこの Secret を Cloud Run の環境変数として参照する。
 
 ## 記号の追加方法
 
