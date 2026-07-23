@@ -42,6 +42,22 @@ GEMINI_API_KEY="your-key" uvicorn main:app --host 0.0.0.0 --port 8080
 # → http://localhost:8080
 ```
 
+
+## PRレビュー向けビジュアル確認
+
+Web UI または Web アプリの挙動を変更した場合は、`AGENTS.md` のルールに従って修正前後のスクリーンショットを取得し、タスク実行結果に URL・スクリーンショットパス・確認結果を記載する。
+
+ローカルでの確認環境は次の手順で構築する。
+
+```bash
+python -m pip install -r requirements.txt -r dev-requirements.txt
+python -m playwright install chromium
+python -m playwright install-deps chromium  # Linux でブラウザ依存ライブラリが不足する場合
+python scripts/visual_review.py --path / --label after
+```
+
+`--path /drill` のように対象ページを指定できる。生成物は `artifacts/visual-review/` に保存され、`.gitignore` によりコミット対象外になる。
+
 ## デプロイ (Cloud Run)
 
 デプロイは GitHub Actions の手動実行で行う。GitHub の **Actions → Deploy Cloud Run → Run workflow** を開き、`main` ブランチを選んで実行する。必要に応じて `gemini_model` と `max_instances` を入力する。
