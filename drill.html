@@ -106,6 +106,15 @@
     padding-bottom: env(safe-area-inset-bottom); background: var(--primary);
   }
   .submitbar button { width: 100%; font-size: 14px; letter-spacing: .14em; }
+  .judge-spinner {
+    width: 18px; height: 18px;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; display: inline-block;
+    animation: judge-spin .8s linear infinite;
+  }
+  @keyframes judge-spin {
+    to { transform: rotate(360deg); }
+  }
 </style>
 </head>
 <body>
@@ -289,8 +298,11 @@ $("judge").onclick = async () => {
   const judgingSymbolId = q.id;
   lastImg = img;
   const btn = $("judge");
+  const spinner = document.createElement("span");
+  spinner.className = "judge-spinner";
   setBusy(true);
-  btn.textContent = "判定中…";
+  btn.setAttribute("aria-busy", "true");
+  btn.replaceChildren(spinner, document.createTextNode("判定中…"));
   $("errbox").style.display = "none";
   try {
     const res = await fetch("/api/judge", {
@@ -310,6 +322,7 @@ $("judge").onclick = async () => {
     showError("判定結果を受信できませんでした。通信状態を確認して再試行してください。");
   } finally {
     setBusy(false);
+    btn.removeAttribute("aria-busy");
     btn.replaceChildren();
     const icon = document.createElement("span");
     icon.className = "material-symbols-outlined";
