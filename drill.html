@@ -19,7 +19,7 @@
 <link rel="stylesheet" href="/theme.css">
 <style>
   body { padding: 86px 16px 156px; }
-  body.reviewed { padding-bottom: 16px; }
+  body.reviewed { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 
   /* ---- fixed header ---- */
   header {
@@ -122,6 +122,20 @@
     text-decoration: underline; letter-spacing: .04em;
   }
   .actions { display: flex; gap: 8px; padding: 12px 14px 14px; }
+  body.reviewed .actions {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: var(--page-max);
+    box-sizing: border-box;
+    z-index: 60;
+    padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 24px rgba(10, 30, 60, .08);
+  }
   #retry { flex: 1; }
   #goNext { flex: 1.5; }
 
@@ -187,10 +201,10 @@
   <div class="dispute-row">
     <button id="dispute">判定に納得できない(匿名で報告)</button>
   </div>
-  <div class="actions">
+  <footer class="actions" aria-label="結果画面の操作">
     <button id="retry" class="btn btn-secondary">もう一度描く</button>
     <button id="goNext" class="btn btn-primary">次の課題<span class="material-symbols-outlined" style="font-size:18px">arrow_forward</span></button>
-  </div>
+  </footer>
 </section>
 
 <div class="tools">
