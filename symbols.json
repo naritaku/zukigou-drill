@@ -646,10 +646,6 @@
         "電話機形インターホン子機(一重円+t)と混同する",
         "加入電話機(二重円+T)と混同する"
       ],
-      "confusable_symbols": [
-        "電話機形インターホン子機",
-        "加入電話機"
-      ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
       "confusable_symbols": [
         "加入電話機(同じ二重円で文字だけが大文字T)",
@@ -675,10 +671,6 @@
       "common_mistakes": [
         "電話機形インターホン親機(二重円+t)と混同する",
         "内線電話機(一重円+T)と混同する"
-      ],
-      "confusable_symbols": [
-        "電話機形インターホン親機",
-        "内線電話機"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
       "confusable_symbols": [
@@ -706,10 +698,6 @@
         "加入電話機(二重円+T)と混同する",
         "電話機形インターホン子機(一重円+t)と混同する"
       ],
-      "confusable_symbols": [
-        "加入電話機",
-        "電話機形インターホン子機"
-      ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='60' text-anchor='middle' font-size='27' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
       "confusable_symbols": [
         "電話機形インターホン子機(同じ一重円で文字だけが小文字t)",
@@ -735,10 +723,6 @@
       "common_mistakes": [
         "内線電話機(一重円+T)と混同する",
         "電話機形インターホン親機(二重円+t)と混同する"
-      ],
-      "confusable_symbols": [
-        "内線電話機",
-        "電話機形インターホン親機"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='60' text-anchor='middle' font-size='24' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
       "confusable_symbols": [
