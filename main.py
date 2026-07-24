@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from google import genai
+from google.cloud import firestore
 from google.genai import types
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -86,8 +87,10 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
 SYMBOLS = _load_symbols()
 _clients: dict[str, genai.Client] = {}
 _storage_client: Any = None
+_firestore_client: Any = None
 _client_lock = threading.Lock()
 _storage_lock = threading.Lock()
+_firestore_lock = threading.Lock()
 _rate_limited_keys: dict[str, tuple[float, int]] = {}  # APIキー → (レート制限時刻, 連続失敗回数)
 _rate_limit_lock = threading.Lock()
 
@@ -153,6 +156,18 @@ def _gemini_api_keys() -> list[tuple[str, str]]:
     return keys
 
 
+def _get_firestore_client() -> firestore.Client | None:
+    """Firestore クライアントを取得（シングルトン）。"""
+    global _firestore_client
+    if _firestore_client is None:
+        try:
+            _firestore_client = firestore.Client()
+        except Exception as e:
+            logger.warning(f"Failed to initialize Firestore client: {e}")
+            return None
+    return _firestore_client
+
+
 def _get_genai_client(api_key: str | None = None) -> genai.Client:
     if api_key is None:
         keys = _gemini_api_keys()
@@ -168,7 +183,7 @@ def _get_genai_client(api_key: str | None = None) -> genai.Client:
 
 
 def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
-    """APIキーのレート制限状態を確認（ロック保持）。
+    """APIキーのレート制限状態を確認。Firestore と メモリから読み込み。
 
     戻り値：
       None: レート制限なし
@@ -176,12 +191,36 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
     """
     now = time.time()
     with _rate_limit_lock:
+        # Firestore から状態を読み込み
+        db = _get_firestore_client()
+        if db:
+            try:
+                doc = db.collection("rate_limits").document(api_key).get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    limited_at = data.get("timestamp", now)
+                    consecutive_count = data.get("consecutive_count", 0)
+                    backoff_seconds = data.get("backoff_seconds", 0)
+                    elapsed = now - limited_at
+
+                    if elapsed < backoff_seconds:
+                        return {
+                            "remaining": backoff_seconds - elapsed,
+                            "consecutive_count": consecutive_count,
+                            "backoff_seconds": backoff_seconds,
+                        }
+                    else:
+                        # バックオフ期間終了 → Firestore から削除
+                        doc.reference.delete()
+                        return None
+            except Exception as e:
+                logger.debug(f"Failed to read rate limit from Firestore: {e}")
+
+        # フォールバック：メモリから読み込み
         if api_key not in _rate_limited_keys:
             return None
 
         limited_at, consecutive_count = _rate_limited_keys[api_key]
-
-        # 連続失敗回数に応じたバックオフ時間を取得（0-indexed）
         backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
         backoff_seconds = _BACKOFF_SECONDS[backoff_index]
         elapsed = now - limited_at
@@ -198,15 +237,37 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
 
 
 def _mark_rate_limited(api_key: str) -> None:
-    """429エラーを記録し、バックオフカウントをインクリメント（ロック保持）。"""
+    """429エラーを記録し、バックオフカウントをインクリメント。Firestore に永続化。"""
     now = time.time()
     with _rate_limit_lock:
         if api_key in _rate_limited_keys:
-            limited_at, consecutive_count = _rate_limited_keys[api_key]
+            _, consecutive_count = _rate_limited_keys[api_key]
             consecutive_count = min(consecutive_count + 1, len(_BACKOFF_SECONDS))
         else:
             consecutive_count = 1
+
         _rate_limited_keys[api_key] = (now, consecutive_count)
+
+        # Firestore に保存（永続化）
+        db = _get_firestore_client()
+        if db:
+            try:
+                backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
+                backoff_seconds = _BACKOFF_SECONDS[backoff_index]
+                db.collection("rate_limits").document(api_key).set({
+                    "timestamp": now,
+                    "consecutive_count": consecutive_count,
+                    "backoff_seconds": backoff_seconds,
+                })
+                logger.info(
+                    f"Rate limited: {api_key}",
+                    extra={
+                        "consecutive_count": consecutive_count,
+                        "backoff_minutes": backoff_seconds / 60,
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Failed to save rate limit status to Firestore: {e}")
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
