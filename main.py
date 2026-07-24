@@ -19,8 +19,8 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, TypedDict
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from google import genai
 from google.genai import types
 from PIL import Image
@@ -40,6 +40,9 @@ INK_THRESHOLD = int(os.environ.get("INK_THRESHOLD", "245"))
 MAX_OBSERVATION_CHARS = 500
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
+# Cloud Run / ロードバランサ配下では X-Forwarded-For の末尾が実クライアント。
+# プロキシを介さず直接公開する場合は "0" にして接続元 IP を使う。
+TRUST_FORWARDED_FOR = os.environ.get("TRUST_FORWARDED_FOR", "1") not in ("0", "false", "False")
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
 ALL_JUDGMENTS_BUCKET = os.environ.get("ALL_JUDGMENTS_BUCKET", "")
@@ -206,6 +209,21 @@ def _mark_rate_limited(api_key: str) -> None:
         _rate_limited_keys[api_key] = (now, consecutive_count)
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Gemini SDK の 429(RESOURCE_EXHAUSTED) を判定する。
+
+    google-genai の APIError/ClientError は `code`(int) と `status`(str) を持ち、
+    `status_code` は持たない。SDK 実装の変更や別経路の例外にも耐えるよう、
+    複数の属性を許容する。
+    """
+    for attr in ("code", "status_code"):
+        if getattr(exc, attr, None) == 429:
+            return True
+    if getattr(exc, "status", None) == "RESOURCE_EXHAUSTED":
+        return True
+    return False
+
+
 def _generate_vision_result(image: bytes, prompt: str, symbol_id: str) -> VisionResult:
     api_keys = _gemini_api_keys()
     if not api_keys:
@@ -261,7 +279,7 @@ def _generate_vision_result(image: bytes, prompt: str, symbol_id: str) -> Vision
             except Exception as exc:
                 last_error = exc
                 # レート制限エラー（429）を検出したら、このキーを記録して次のキーを試す
-                if getattr(exc, "status_code", None) == 429:
+                if _is_rate_limit_error(exc):
                     _mark_rate_limited(api_key)
                     logger.warning(
                         "rate limit reached; marking API key as rate limited",
@@ -341,8 +359,14 @@ def _flatten_image(img: Image.Image) -> Image.Image:
 
 
 def _count_ink_pixels(img: Image.Image) -> int:
-    gray = img.convert("L")
-    return sum(1 for value in gray.getdata() if value < INK_THRESHOLD)
+    """INK_THRESHOLD 未満の輝度を持つピクセル数を数える。
+
+    getdata() の Python ループは 4MP で ~280ms かかり、白紙に近い巨大画像を
+    投げるだけで CPU を消費させられる。histogram() は C 実装で同じ結果を
+    ~16ms で返すため、外部 API 呼び出し前の門番として十分軽い。
+    """
+    histogram = img.convert("L").histogram()
+    return sum(histogram[:INK_THRESHOLD])
 
 
 def _save_to_gcs(
@@ -384,7 +408,9 @@ def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> No
     _save_to_gcs(FEEDBACK_BUCKET, symbol_id, image, judgment, prefix="disputed")
 
 
-app = FastAPI(title="KENZU", docs_url=None, redoc_url=None)
+# docs_url/redoc_url だけを None にしても /openapi.json は既定で公開されるため、
+# openapi_url も明示的に無効化する。
+app = FastAPI(title="KENZU", docs_url=None, redoc_url=None, openapi_url=None)
 
 
 def _page(name: str, request: Request) -> HTMLResponse:
@@ -393,8 +419,12 @@ def _page(name: str, request: Request) -> HTMLResponse:
 
 
 @app.exception_handler(404)
-async def not_found(request: Request, exc: Exception) -> HTMLResponse:
-    del request, exc
+async def not_found(request: Request, exc: Exception) -> Response:
+    # /api/* は JSON クライアント向けなので、HTML の 404 ページを返さない。
+    if request.url.path.startswith("/api/"):
+        detail = getattr(exc, "detail", "not found")
+        return JSONResponse({"detail": detail}, status_code=404)
+    del exc
     html = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>404 — 配線用図記号ドリル</title><link rel="stylesheet" href="/theme.css"></head>
@@ -411,7 +441,23 @@ _hits_lock = threading.Lock()
 
 
 def _client_ip(request: Request) -> str:
-    # Cloud Run 直公開では request.client.host を使う。X-Forwarded-For はクライアント偽装を避けるため参照しない。
+    """レート制限のキーになるクライアント識別子を返す。
+
+    Cloud Run では TCP の接続元がフロントエンドプロキシになるため、
+    request.client.host をそのまま使うと全ユーザーが 1 つのレート制限バケットを
+    共有してしまう。Cloud Run は実際の接続元を X-Forwarded-For の**末尾**に
+    追加するため、末尾の値を採用する。クライアントが偽装できるのは左側だけなので、
+    末尾を見る限り偽装されない。
+
+    プロキシ経由でない環境（ローカル実行など）では X-Forwarded-For が無いので
+    request.client.host にフォールバックする。
+    """
+    if TRUST_FORWARDED_FOR:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            candidates = [value.strip() for value in forwarded.split(",") if value.strip()]
+            if candidates:
+                return candidates[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -443,7 +489,16 @@ class VisionResult(BaseModel):
     required: list[bool] = Field(default_factory=list)
     forbidden: list[bool] = Field(default_factory=list)
     confusions: list[bool] = Field(default_factory=list)
-    observation: str = Field(default="", max_length=MAX_OBSERVATION_CHARS)
+    observation: str = Field(default="")
+
+    @field_validator("observation")
+    @classmethod
+    def truncate_observation(cls, value: str) -> str:
+        # 長さ超過で検証エラーにすると、その候補が失敗扱いになり全キー・全モデルを
+        # 消費してしまう。観察文は表示用なので、切り詰めて受け入れる。
+        if len(value) > MAX_OBSERVATION_CHARS:
+            return value[:MAX_OBSERVATION_CHARS]
+        return value
 
     @staticmethod
     def _at(values: list[bool], index: int) -> bool:
@@ -551,7 +606,7 @@ def question() -> dict[str, Any]:
 
 
 @app.post("/api/judge")
-def judge(req: JudgeRequest, request: Request) -> dict[str, Any]:
+def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> dict[str, Any]:
     _check_rate(request)
     symbol = SYMBOLS.get(req.symbol_id)
     if not symbol:
@@ -626,7 +681,11 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
         "disputed": False,
         "saved_type": "judgment",
     }
-    _save_to_gcs(ALL_JUDGMENTS_BUCKET, req.symbol_id, image, judgment_data, prefix="judgments")
+    # GCS へのアップロードは応答をブロックしない（失敗しても判定結果は返す）。
+    if ALL_JUDGMENTS_BUCKET:
+        background.add_task(
+            _save_to_gcs, ALL_JUDGMENTS_BUCKET, req.symbol_id, image, judgment_data, "judgments"
+        )
 
     return {
         "symbol_id": req.symbol_id,
@@ -640,7 +699,7 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
 
 
 @app.post("/api/report")
-def report(req: ReportRequest, request: Request) -> dict[str, bool]:
+def report(req: ReportRequest, request: Request, background: BackgroundTasks) -> dict[str, bool]:
     _check_rate(request)
     symbol = SYMBOLS.get(req.symbol_id)
     if not symbol:
@@ -662,7 +721,8 @@ def report(req: ReportRequest, request: Request) -> dict[str, bool]:
             "date": datetime.date.today().isoformat(),
         }
     )
-    _save_feedback(req.symbol_id, image, judgment)
+    if FEEDBACK_BUCKET:
+        background.add_task(_save_feedback, req.symbol_id, image, judgment)
     return {"ok": True}
 
 
@@ -675,6 +735,16 @@ def healthz() -> dict[str, bool]:
 def readyz() -> dict[str, Any]:
     if not SYMBOLS:
         raise HTTPException(503, "no symbols loaded")
-    if not _gemini_api_keys():
+    keys = _gemini_api_keys()
+    if not keys:
         raise HTTPException(503, "Gemini is not configured")
-    return {"ok": True, "symbols": len(SYMBOLS), "feedback_enabled": bool(FEEDBACK_BUCKET)}
+    available = [label for label, api_key in keys if _get_rate_limit_status(api_key) is None]
+    if not available:
+        raise HTTPException(503, "all Gemini API keys are rate limited")
+    return {
+        "ok": True,
+        "symbols": len(SYMBOLS),
+        "feedback_enabled": bool(FEEDBACK_BUCKET),
+        "keys_available": len(available),
+        "keys_total": len(keys),
+    }

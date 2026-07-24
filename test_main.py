@@ -4,8 +4,9 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
+from google.genai import errors as genai_errors
 from PIL import Image, ImageDraw
 
 import main
@@ -662,8 +663,11 @@ class GenerateVisionResultTest(unittest.TestCase):
         free_client = Mock()
         paid_client = Mock()
 
-        rate_limit_error = RuntimeError("rate limited")
-        rate_limit_error.status_code = 429
+        # SDK が実際に送出する例外型を使う。自作の RuntimeError に status_code を
+        # 付ける形だと、実装が誤った属性名を見ていても検出できない。
+        rate_limit_error = genai_errors.ClientError(
+            429, {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        )
         free_client.models.generate_content.side_effect = rate_limit_error
         paid_client.models.generate_content.return_value.text = response_text
 
@@ -680,6 +684,22 @@ class GenerateVisionResultTest(unittest.TestCase):
         status = main._get_rate_limit_status("free-key")
         self.assertIsNotNone(status)
         self.assertEqual(status["consecutive_count"], 1)
+
+    def test_is_rate_limit_error_detects_real_sdk_exception(self):
+        """SDK の ClientError(429) を 429 として判定できる（属性名リグレッション防止）"""
+        exc = genai_errors.ClientError(
+            429, {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        )
+        # SDK は status_code ではなく code を持つ
+        self.assertFalse(hasattr(exc, "status_code"))
+        self.assertEqual(exc.code, 429)
+        self.assertTrue(main._is_rate_limit_error(exc))
+
+    def test_is_rate_limit_error_ignores_other_errors(self):
+        """429 以外のエラーはレート制限として扱わない"""
+        exc = genai_errors.ClientError(400, {"error": {"message": "bad request", "status": "INVALID_ARGUMENT"}})
+        self.assertFalse(main._is_rate_limit_error(exc))
+        self.assertFalse(main._is_rate_limit_error(RuntimeError("boom")))
 
     def test_generate_vision_result_skips_rate_limited_keys(self):
         """レート制限中のキーはスキップ"""
@@ -758,6 +778,128 @@ class EnvironmentConfigTest(unittest.TestCase):
 
         self.assertIsInstance(models, list)
         self.assertGreater(len(models), 0)
+
+
+class ApiErrorContractTest(unittest.TestCase):
+    """API エンドポイントのエラー応答が JSON であることを保証する"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._hits.clear()
+
+    def test_api_404_returns_json_not_html(self):
+        """/api/* の 404 は HTML ページではなく JSON を返す"""
+        res = self.client.post(
+            "/api/judge", json={"symbol_id": "no-such-symbol", "image_b64": inked_png_b64()}
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("application/json", res.headers["content-type"])
+        self.assertEqual(res.json()["detail"], "unknown symbol")
+
+    def test_html_404_still_returns_page(self):
+        """通常ページの 404 は HTML のまま"""
+        res = self.client.get("/no-such-page")
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("text/html", res.headers["content-type"])
+
+    def test_openapi_schema_is_not_exposed(self):
+        """/openapi.json を公開しない"""
+        self.assertEqual(self.client.get("/openapi.json").status_code, 404)
+
+
+class ClientIpTest(unittest.TestCase):
+    """レート制限のキーになるクライアント識別子の決定ロジック"""
+
+    def _request(self, headers=None, peer="10.0.0.1"):
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+            "client": (peer, 12345),
+        }
+        return Request(scope)
+
+    def test_uses_last_forwarded_for_entry(self):
+        """X-Forwarded-For の末尾（インフラが付与する実接続元）を使う"""
+        req = self._request({"x-forwarded-for": "1.2.3.4, 5.6.7.8"})
+        self.assertEqual(main._client_ip(req), "5.6.7.8")
+
+    def test_ignores_client_spoofed_prefix(self):
+        """クライアントが左側に偽装値を入れても末尾が採用される"""
+        req = self._request({"x-forwarded-for": "attacker-spoofed, 203.0.113.9"})
+        self.assertEqual(main._client_ip(req), "203.0.113.9")
+
+    def test_falls_back_to_peer_without_header(self):
+        """ヘッダが無ければ接続元 IP を使う"""
+        self.assertEqual(main._client_ip(self._request(peer="192.0.2.5")), "192.0.2.5")
+
+    def test_distinct_clients_get_distinct_rate_buckets(self):
+        """異なるクライアントが別々のレート制限バケットになる"""
+        main._hits.clear()
+        original = main.RATE_LIMIT
+        try:
+            main.RATE_LIMIT = 1
+            main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.1"}))
+            # 別クライアントは影響を受けない
+            main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.2"}))
+            # 同じクライアントの2回目は弾かれる
+            with self.assertRaises(HTTPException) as ctx:
+                main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.1"}))
+            self.assertEqual(ctx.exception.status_code, 429)
+        finally:
+            main.RATE_LIMIT = original
+            main._hits.clear()
+
+
+class VisionResultObservationTest(unittest.TestCase):
+    """observation の長さ超過で候補を失わないこと"""
+
+    def test_long_observation_is_truncated_not_rejected(self):
+        payload = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "あ" * (main.MAX_OBSERVATION_CHARS + 200),
+            },
+            ensure_ascii=False,
+        )
+        result = main.VisionResult.model_validate_json(payload)
+        self.assertEqual(len(result.observation), main.MAX_OBSERVATION_CHARS)
+
+
+class ReadyzTest(unittest.TestCase):
+    """/readyz が全キーのレート制限状態を反映する"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._rate_limited_keys.clear()
+
+    def tearDown(self):
+        main._rate_limited_keys.clear()
+
+    def test_readyz_ok_when_key_available(self):
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["keys_available"], 1)
+
+    def test_readyz_503_when_all_keys_rate_limited(self):
+        main._mark_rate_limited("free-key")
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 503)
+
+    def test_readyz_ok_when_one_of_two_keys_available(self):
+        main._mark_rate_limited("free-key")
+        with patch.object(
+            main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]
+        ):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["keys_available"], 1)
+        self.assertEqual(res.json()["keys_total"], 2)
 
 
 if __name__ == "__main__":
