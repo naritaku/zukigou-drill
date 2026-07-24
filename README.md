@@ -1,11 +1,5 @@
 # 配線用図記号ドリル 📝
 
-![Tests](https://img.shields.io/badge/tests-53%2F53-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-85%25-green)
-![Review](https://img.shields.io/badge/adversarial--review-clear-brightgreen)
-![Code%20Quality](https://img.shields.io/badge/quality-improved-green)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-
 電気通信工事施工管理技士試験の設備系統図学習向け Web ドリル。スマホで指描きした JIS C 0303 記号を AI が判定し、フィードバックが得られる。
 
 **ログイン不要・成績保存なし・URL 共有だけで利用可能**
