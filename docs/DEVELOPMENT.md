@@ -51,15 +51,20 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `FEEDBACK_BUCKET`: GCS バケット（異議報告保存・学習データ用）
 
 **通信制限:**
-- `RATE_LIMIT`: 既定 20（秒間リクエスト数上限）
+- `RATE_LIMIT`: 既定 20（`RATE_WINDOW` あたりの最大リクエスト数）
 - `RATE_WINDOW`: 既定 60（秒単位のウィンドウ）
+- `TRUST_FORWARDED_FOR`: 既定 1。`X-Forwarded-For` の**末尾**をクライアント識別子に使う。
+  Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
+  無効にすると全ユーザーが 1 つのレート制限バケットを共有してしまう）。
+  プロキシを介さず直接公開する場合のみ `0` にする。
 
 **画像検証:**
 - `MAX_IMAGE_BYTES`: 既定 1000000
 - `MAX_IMAGE_B64_CHARS`: 既定 1500000
 - `MAX_IMAGE_PIXELS`: 既定 4000000
-- `MAX_IMAGE_DIM`: 既定 1024
-- `MIN_INK_PIXELS`: 既定 20
+- `MAX_IMAGE_DIM`: 既定 1024（超過分はサーバー側で縮小）
+- `MIN_INK_PIXELS`: 既定 20（未満なら白紙として 400 で拒否）
+- `INK_THRESHOLD`: 既定 245（この輝度未満をインクとみなす）
 
 ---
 
@@ -377,9 +382,11 @@ done
 gcloud storage buckets create gs://zukigou-all-judgments --location=asia-northeast1
 echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/lc.json
 gcloud storage buckets update gs://zukigou-all-judgments --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill \
-  --set-env-vars ALL_JUDGMENTS_BUCKET=zukigou-all-judgments
 ```
+
+バケット名は **Deploy Cloud Run ワークフローの `all_judgments_bucket` 入力**に指定する。
+`gcloud run services update` で手動設定しても、次回デプロイの `--set-env-vars` が
+環境変数一式を置き換えるため消える。
 
 ### 異議報告の保存（学習データ用）
 
@@ -394,9 +401,9 @@ gcloud run services update zukigou-drill \
 gcloud storage buckets create gs://zukigou-feedback --location=asia-northeast1
 echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}' > /tmp/lc.json
 gcloud storage buckets update gs://zukigou-feedback --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill \
-  --set-env-vars FEEDBACK_BUCKET=zukigou-feedback
 ```
+
+同様に、バケット名は **Deploy Cloud Run ワークフローの `feedback_bucket` 入力**に指定する。
 
 ---
 

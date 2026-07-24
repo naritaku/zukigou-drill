@@ -23,6 +23,14 @@ on:
         description: Rate limit window in seconds
         required: false
         default: "60"
+      all_judgments_bucket:
+        description: GCS bucket for all judgments (empty disables saving)
+        required: false
+        default: ""
+      feedback_bucket:
+        description: GCS bucket for disputed reports (empty disables saving)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -52,20 +60,38 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve available Gemini secrets
+        id: secrets
+        run: |
+          # GEMINI_API_KEY 以外は任意。Secret Manager に無いものを指定すると
+          # デプロイ全体が失敗するため、存在するものだけを渡す。
+          if ! gcloud secrets describe GEMINI_API_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            echo "::error::Secret GEMINI_API_KEY not found in project $PROJECT_ID"
+            exit 1
+          fi
+          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest"
+          for name in GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
+            if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+              MAPPINGS="${MAPPINGS},${name}=${name}:latest"
+            else
+              echo "::notice::Optional secret $name not found; skipping"
+            fi
+          done
+          echo "mappings=${MAPPINGS}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy from source
         run: |
+          # --set-secrets / --set-env-vars は指定した集合で「置き換える」。
+          # フラグを複数回書かず1つにまとめ、環境変数はすべてここで確定させる
+          # （手動 gcloud update で足した値はデプロイ時に消えるため、
+          #  バケット名も workflow_dispatch の入力として渡す）。
           gcloud run deploy "$SERVICE_NAME" --source . \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --allow-unauthenticated \
             --max-instances "${{ inputs.max_instances }}" \
-            --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest" \
-            --set-secrets "GEMINI_API_KEYS=GEMINI_API_KEYS:latest" \
-            --set-secrets "GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest" \
-            --set-env-vars "GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}" \
-            --set-env-vars "GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}" \
-            --set-env-vars "RATE_LIMIT=${{ inputs.rate_limit }}" \
-            --set-env-vars "RATE_WINDOW=${{ inputs.rate_window }}"
+            --set-secrets "${{ steps.secrets.outputs.mappings }}" \
+            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
 
       - name: Verify health endpoints
         run: |
