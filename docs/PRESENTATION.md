@@ -103,6 +103,36 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
+# デモ：その場でお試しください
+
+<div class="columns">
+<div>
+
+### 体験の流れ（30 秒）
+
+1. 記号を選ぶ
+2. 指で描く
+3. 「判定」をタップ
+4. 合否と「どこが違うか」が即表示
+
+**ログイン不要・インストール不要**
+
+いま QR コードからアクセスできます →
+
+</div>
+<div style="display: flex; align-items: flex-end; justify-content: center;">
+
+<div style="padding: 24px; background: #ffffff; border-radius: 4px;">
+
+![w:250](https://api.qrserver.com/v1/create-qr-code/?size=500x500&margin=50&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+
+</div>
+
+</div>
+</div>
+
+---
+
 # ソリューション：スマホだけで安く・早く・簡単に
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2em; margin-top: 1.2em;">
@@ -131,36 +161,6 @@ LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コー�
 
 </div>
 
-</div>
-
----
-
-# デモ：その場でお試しください
-
-<div class="columns">
-<div>
-
-### 体験の流れ（30 秒）
-
-1. 記号を選ぶ
-2. 指で描く
-3. 「判定」をタップ
-4. 合否と「どこが違うか」が即表示
-
-**ログイン不要・インストール不要**
-
-いま QR コードからアクセスできます →
-
-</div>
-<div style="display: flex; align-items: center; justify-content: center;">
-
-<div style="padding: 24px; background: #ffffff; border-radius: 4px;">
-
-![w:250](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=25&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
-
-</div>
-
-</div>
 </div>
 
 ---
