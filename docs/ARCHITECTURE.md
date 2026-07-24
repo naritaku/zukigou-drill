@@ -4,73 +4,36 @@
 
 ## 全体構成
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ ユーザー（スマートフォン）                                   │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-        [HTML5 Canvas + JavaScript]
-                       │
-        ┌──────────────▼──────────────┐
-        │ 画像処理                     │
-        │ - 白背景化                   │
-        │ - トリミング                 │
-        │ - 正規化 (512px)             │
-        │ - PNG エンコード              │
-        └──────────────┬──────────────┘
-                       │
-                    POST /api/judge
-                       │
-        ┌──────────────▼────────────────────────┐
-        │ Cloud Run (FastAPI)                  │
-        │                                      │
-        │ ┌──────────────────────────────────┐ │
-        │ │ Rate Limiting (Firestore)        │ │
-        │ │ - キーごとのバックオフ管理       │ │
-        │ │ - 指数バックオフ (75s→24h)       │ │
-        │ │ - クラウド再起動後も状態保持     │ │
-        │ └──────────────────────────────────┘ │
-        │                                      │
-        │ ┌──────────────────────────────────┐ │
-        │ │ ルーブリック判定エンジン          │ │
-        │ │ - symbols.json ロード             │ │
-        │ │ - 必須特徴・禁止特徴・類似判定    │ │
-        │ └──────────────────────────────────┘ │
-        │                                      │
-        │ ┌──────────────────────────────────┐ │
-        │ │ Gemini API 呼び出し               │ │
-        │ │ - 複数キーフォールバック          │ │
-        │ │ - 複数モデルの試行                │ │
-        │ │ - JSON Schema 固定採点            │ │
-        │ └──────────────────────────────────┘ │
-        └──────────────┬────────────────────────┘
-                       │
-                    JSON
-                    {
-                      passed: bool,
-                      score: float,
-                      checks: {...},
-                      mistakes: [...]
-                    }
-                       │
-        ┌──────────────▼────────────────────┐
-        │ Cloud Storage (GCS) - 任意         │
-        │ - ALL_JUDGMENTS_BUCKET              │
-        │   (全判定データ、30日で自動削除)   │
-        │ - FEEDBACK_BUCKET                   │
-        │   (異議報告のみ、90日で自動削除)   │
-        └─────────────────────────────────────┘
+```mermaid
+graph TD
+    A["📱 ブラウザ<br/>HTML5 Canvas 指描き"] --> B["🖼️ クライアント画像処理<br/>白背景化・トリミング・512px 正規化"]
+    B -->|"POST /api/judge<br/>base64 PNG"| C["☁️ Cloud Run / FastAPI"]
 
-                      JSON
-                       │
-        ┌──────────────▼──────────────┐
-        │ ブラウザ UI レンダリング      │
-        │ - 合否表示                   │
-        │ - スコア表示                 │
-        │ - 不足特徴の詳細表示         │
-        │ - お手本との比較表示         │
-        └──────────────────────────────┘
+    C --> D["🚦 IP レート制限<br/>X-Forwarded-For 末尾ごと<br/>20 req / 60 s"]
+    D --> E["🔍 サーバー側画像検証<br/>PNG 形式・サイズ・ピクセル数<br/>インク量（白紙拒否）"]
+    E --> F["📋 ルーブリック構築<br/>symbols.json（起動時キャッシュ）"]
+    F --> G["🔑 キー選択<br/>バックオフ中のキーはスキップ<br/>無料 → 追加 → 有料"]
+    G -->|"画像 + プロンプト"| H["🤖 Gemini Vision<br/>各特徴を true/false で観察<br/>JSON Schema 強制・temperature 0"]
+    H -->|"429 の場合"| I["⏱️ 指数バックオフ登録<br/>75s → 24h（メモリ上）"]
+    I -.->|"次のキーへ"| G
+    H -->|"観察結果"| J["🎯 決定的採点<br/>合否・スコアはコードで算出"]
+    J -->|"JSON レスポンス"| K["📊 ブラウザ表示<br/>合否・スコア・不足特徴・お手本"]
+    J -.->|"BackgroundTask（応答をブロックしない）"| L["💾 Cloud Storage<br/>judgments / disputed<br/>※ 環境変数未設定なら無効"]
+
+    style C fill:#e3f2fd,stroke:#1976d2
+    style D fill:#fff3e0,stroke:#f57c00
+    style E fill:#fff3e0,stroke:#f57c00
+    style F fill:#e8f5e9,stroke:#388e3c
+    style G fill:#fff3e0,stroke:#f57c00
+    style H fill:#f3e5f5,stroke:#7b1fa2
+    style I fill:#ffebee,stroke:#d32f2f
+    style J fill:#e8f5e9,stroke:#388e3c
+    style L fill:#fce4ec,stroke:#c2185b,stroke-dasharray: 5 5
 ```
+
+**状態を持つのはレート制限だけ**で、それもインスタンス内メモリに閉じている
+（外部ストアへの永続化は未実装）。それ以外は完全にステートレスで、
+Cloud Run の scale to zero がそのまま成立する。
 
 ---
 
@@ -137,60 +100,56 @@
 - 最大長: 500 文字
 - 内容: Gemini vision による特徴観察の詳細（日本語）
 
-**エラーレスポンス詳細**:
+**エラーレスポンス**:
 
-#### 400 Bad Request（画像検証エラー）
-```json
-{
-  "error": "image_validation_failed",
-  "message": "Image size exceeds maximum (1000000 bytes)",
-  "code": "SIZE_EXCEEDED",
-  "status": 400
-}
-```
-可能なエラーコード:
-- `FORMAT_INVALID`: PNG 以外の形式
-- `SIZE_EXCEEDED`: バイト数が上限超過
-- `DIMENSIONS_INVALID`: 解像度が上限超過
-- `PIXELS_EXCEEDED`: ピクセル数が上限超過
-- `BLANK_IMAGE`: ほぼ白紙（インク量不足）
-- `SYMBOL_ID_INVALID`: symbol_id が symbols.json に存在しない
+エラーは FastAPI 標準の形式で返る。ボディは常に `detail` のみを持つ。
 
-#### 429 Too Many Requests（レート制限）
 ```json
-{
-  "error": "rate_limited",
-  "message": "API key 'primary' rate limited. Retry after 600 seconds",
-  "key_label": "primary",
-  "retry_after_seconds": 600,
-  "status": 429
-}
+{ "detail": "invalid base64 image" }
 ```
-対応ヘッダ: `Retry-After: 600`
 
-#### 503 Service Unavailable（Gemini API 全体が失敗）
-```json
-{
-  "error": "service_unavailable",
-  "message": "All Gemini API keys exhausted or rate limited",
-  "status": 503
-}
-```
-原因:
-- すべての API キーが rate limited 中
-- Gemini API 全体が不可（メンテナンス中など）
-- Secret Manager から API キーを取得できない
+| ステータス | `detail` の例 | 発生条件 |
+|---|---|---|
+| 400 | `invalid base64 image` | base64 としてデコードできない |
+| 400 | `PNG image required` | PNG 以外の形式 |
+| 400 | `empty drawing` | インク量が `MIN_INK_PIXELS` 未満（ほぼ白紙） |
+| 400 | `invalid PNG image` | PNG として壊れている |
+| 404 | `unknown symbol` | `symbol_id` が symbols.json に存在しない |
+| 413 | `image too large` | バイト数またはピクセル数が上限超過 |
+| 422 | pydantic の検証エラー詳細 | リクエストボディがスキーマ不一致 |
+| 429 | `しばらく待ってから再度お試しください` | IP あたりのレート制限（`RATE_LIMIT` / `RATE_WINDOW`） |
+| 503 | `judgment service is not configured` | API キーが 1 つも設定されていない |
+| 503 | `judgment service unavailable` | 全キー・全モデルが失敗（quota 枯渇・API 障害など） |
+
+`/api/*` のエラーは常に JSON で返る（HTML の 404 ページは通常ページのみ）。
+429 に `Retry-After` ヘッダは付かない。
 
 ### GET /healthz
 
 プロセス生存確認。常に 200 OK。
 
+```json
+{ "ok": true }
+```
+
 ### GET /readyz
 
 準備状態確認。
 
-- 200: 全て OK
-- 503: Gemini API キー設定なし or すべてのキーが rate limited 中
+```json
+{
+  "ok": true,
+  "symbols": 26,
+  "feedback_enabled": false,
+  "keys_available": 2,
+  "keys_total": 3
+}
+```
+
+- 200: 記号がロード済みで、バックオフ中でない API キーが 1 つ以上ある
+- 503 `no symbols loaded`: symbols.json が空
+- 503 `Gemini is not configured`: API キーが 1 つも設定されていない
+- 503 `all Gemini API keys are rate limited`: 全キーがバックオフ中
 
 ---
 
@@ -255,37 +214,34 @@ confusable_symbols:
 
 ```python
 def judge(image_b64, symbol_id):
-  # 1. 画像検証
-  if invalid(image): return 400
-  
-  # 2. キャッシュ確認 (Firestore)
-  rate_limit_status = firestore.get(symbol_id)
-  if rate_limit_status.is_backoff():
-    return 429, backoff_seconds
-  
-  # 3. API キー試行順序
-  for key in [GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_PAID_API_KEY]:
+  # 1. IP レート制限（X-Forwarded-For 末尾ごと）
+  check_rate(client_ip)               # 超過なら 429
+
+  # 2. 画像検証（外部 API を呼ぶ前に確定させる）
+  image = decode_and_validate(image_b64)   # 不正なら 400 / 413
+
+  # 3. API キー試行順序（バックオフ中のキーはスキップ）
+  for key in [GEMINI_API_KEY, *GEMINI_API_KEYS, GEMINI_PAID_API_KEY]:
+    if in_backoff(key): continue
     for model in MODELS[key.tier]:
       try:
         observation = gemini.vision(image, rubric, model, key)
-        checks = parse_schema(observation)  # JSON Schema チェック
         break
-      except rate_limit:
-        firestore.mark_rate_limited(key.label, backoff_seconds)
-        continue
-      except other_error:
-        continue
+      except RateLimitError:          # code == 429
+        mark_rate_limited(key)        # メモリ上に記録し、このキーは打ち切り
+        break
+      except Exception:
+        continue                      # 次のモデルへ
   
-  # 4. 採点決定
-  passed = all(checks[f] for f in required_features) \
-        and not any(checks[f] for f in forbidden_features)
-  
-  score = calculate_score(checks, required_features)
-  
-  # 5. GCS 保存（オプション）
+  # 4. 採点決定（必須がすべて true、禁止・類似がすべて false なら合格）
+  checks = build_checks(observation, required, forbidden, confusable)
+  passed = all(c["ok"] for c in checks)
+  score  = f"{sum(c['ok'] for c in checks)}/{len(checks)}"   # 例: "7/8"
+
+  # 5. GCS 保存（任意・BackgroundTask なので応答をブロックしない）
   if ALL_JUDGMENTS_BUCKET:
-    gcs.save_judgment(image, symbol_id, checks, score)
-  
+    background.add_task(save_judgment, image, symbol_id, checks, score)
+
   return {
     "passed": passed,
     "score": score,
@@ -316,47 +272,36 @@ def judge(image_b64, symbol_id):
 
 ### バックオフ戦略
 
-API キーが 429 (rate limit) を返すと、Firestore に以下を記録：
+API キーが 429（`code == 429` または `status == "RESOURCE_EXHAUSTED"`）を返すと、
+そのキーをプロセス内の辞書に記録する：
 
-```json
-{
-  "key_label": "primary",
-  "consecutive_failures": 3,
-  "backoff_seconds": 600,
-  "timestamp": "2025-01-20T12:34:56Z",
-  "expires_at": "2025-01-20T12:44:56Z"
-}
+```python
+_rate_limited_keys: dict[str, tuple[float, int]]
+#                        キー → (記録時刻, 連続失敗回数)
 ```
 
-指数バックオフ: 75s → 600s → 3600s → 10800s → 18000s → 36000s → 86400s
+連続失敗回数に応じて待機時間が延びる：
 
-バックオフ中の呼び出しは 429 を即座に返し、別のキーへ自動フォールバック。
+| 連続失敗 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|---|---|---|---|---|---|---|
+| 待機 | 75s | 10m | 1h | 3h | 5h | 10h | 24h |
 
----
+バックオフ中のキーは `/api/judge` の試行対象から外れ、次のキーへフォールバックする。
+待機時間を過ぎたキーは次回参照時に自動で解除される。
 
-## Firestore スキーマ
+#### 永続化していない
 
-### `rate_limits` コレクション
+この状態は **各インスタンスのメモリ上にのみ存在する**。外部ストアには書いていない。
 
-各 API キーのバックオフ状態を永続化。Cloud Run 再起動後も状態が保持される。
+| 事象 | 挙動 |
+|---|---|
+| Cloud Run のコールドスタート | 状態がリセットされ、制限中のキーを一度再試行する |
+| スケールアウト | 新インスタンスは他インスタンスのバックオフを知らない |
+| インスタンス継続中 | 正しくバックオフが効く |
 
-```
-rate_limits/{key_label}
-├─ key_label (string): キーの識別子（"primary", "gemini-api-keys-0", "paid"）
-├─ consecutive_failures (integer): 連続失敗回数
-├─ backoff_seconds (integer): 現在のバックオフ秒数
-├─ timestamp (timestamp): 最後の失敗時刻
-└─ expires_at (timestamp): バックオフ終了予定時刻
-
-例:
-{
-  "key_label": "primary",
-  "consecutive_failures": 3,
-  "backoff_seconds": 600,
-  "timestamp": Timestamp(2025-01-20T12:00:00Z),
-  "expires_at": Timestamp(2025-01-20T12:10:00Z)
-}
-```
+複数インスタンス間で共有したい場合は Firestore や Redis 等の外部ストアが必要だが、
+現状の規模（scale to zero・低トラフィック）では過剰なため採用していない。
+再試行は 1 インスタンスあたり最大 1 回で、すぐ再びバックオフに入るため実害は小さい。
 
 ---
 
@@ -431,32 +376,41 @@ rate_limits/{key_label}
 
 ### Stateless 設計
 
-- データベース接続なし（Firestore は読み書きのみ、永続的なセッション管理なし）
-- セッション状態なし
+- データベースなし
+- ユーザーセッション・認証・成績保存なし
 - キャッシュ戦略:
-  - **symbols.json**: モジュール起動時に一度メモリにロード・キャッシュ（ディスク読み取りなし）
+  - **symbols.json**: モジュール起動時に一度メモリにロード・キャッシュ（リクエストごとのディスク読み取りなし）
+  - **genai クライアント**: API キーごとにプロセス内で再利用
   - **Gemini API 応答**: キャッシュなし（毎回 API 呼び出し）
-  - **ユーザーセッション**: 状態管理なし
 
 → **Cloud Run scale to zero** が可能。使用量に応じた自動スケール。
 
 ### 同時実行性
 
-- 複数インスタンスで安全に並行実行可能
-- Firestore のアトミック操作でレート制限状態を一元管理
+プロセス内で共有される可変状態は 2 つだけで、どちらも `threading.Lock` で保護している。
+
+| 状態 | 用途 | スコープ |
+|---|---|---|
+| `_hits` | IP ごとのレート制限ウィンドウ | インスタンス内 |
+| `_rate_limited_keys` | API キーごとのバックオフ | インスタンス内 |
+
+いずれもインスタンス間で共有しないため、複数インスタンスでは各自が独立して
+制限を適用する。実効的な上限は「インスタンス数 × RATE_LIMIT」になる点に注意。
+厳密に絞りたい場合は Cloud Run の `max-instances` を併用する。
 
 ### コスト最適化
 
-- **無料キー優先**: Gemini API 無料枠の 1500 req/分を活用
+- **無料キー優先**: 無料枠のキーから順に試し、有料キーは最後の手段
 - **段階的フォールバック**: 無料枠枯渇後に有料キーへ移行
 - **Cloud Run scale to zero**: 利用なしで月額 $0
-- **GCS ライフサイクル**: 古いデータの自動削除
+- **外部 API 呼び出し前の門番**: 白紙・巨大画像・レート超過はサーバー側で弾く
+- **GCS ライフサイクル**: 古いデータの自動削除（保存を有効にした場合のみ）
 
 **想定コスト**:
 - Gemini API: ~$0.50-1/月（無料枠メイン）
 - Cloud Run: ~$0.10/月（scale to zero）
-- Firestore: ~$0.05/月（レート制限状態管理のみ）
-- **合計: $0.65-1.15/月**
+- Cloud Storage: $0（既定では保存無効。有効時も無料枠内の見込み）
+- **合計: $0.60-1.10/月**
 
 ---
 
