@@ -14,11 +14,11 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 ### 推奨設定（複数キー・段階的フォールバック）
 
-複数の API キーを用意して、無料枠の配額切れに対応：
+複数の API キーを用意して、無料枠の配額切れに対応。詳細は [ARCHITECTURE.md#api-keyとモデルの管理](ARCHITECTURE.md#api-keyとモデルの管理) を参照。
 
 ```bash
 GEMINI_API_KEY="your-free-key" \
-GEMINI_API_KEYS="additional-free-keys" \
+GEMINI_API_KEYS="additional-free-key-1,additional-free-key-2" \
 GEMINI_PAID_API_KEY="your-paid-key" \
 GEMINI_MODELS_FREE="gemini-3.1-flash-lite,gemini-3.5-flash" \
 GEMINI_MODELS_PAID="gemini-3.1-flash-lite,gemini-3.5-flash" \
@@ -26,9 +26,14 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
 **試行順序（自動フォールバック）:**
-1. `GEMINI_API_KEY` + 無料キーモデル
-2. `GEMINI_API_KEYS` 各キー + 無料キーモデル
-3. `GEMINI_PAID_API_KEY` + 有料キーモデル
+1. `GEMINI_API_KEY` → `GEMINI_MODELS_FREE` で試行
+2. `GEMINI_API_KEYS` の各キー → `GEMINI_MODELS_FREE` で試行
+3. `GEMINI_PAID_API_KEY` → `GEMINI_MODELS_PAID` で試行（最終手段）
+
+**フォールバック機構:**
+- 任意のキーが rate limit（429）を返すと、自動的に次のキーへ移行
+- バックオフ戦略: 75秒 → 10分 → 1時間 → ... → 24時間
+- Firestore に状態が永続化され、Cloud Run 再起動後も保持
 
 ### 環境変数リファレンス
 
@@ -78,8 +83,57 @@ python scripts/visual_review.py --path /drill --label after
 
 ## テスト
 
+### ユニットテスト実行
+
 ```bash
 python -m unittest discover -s . -p 'test_*.py' -v
+```
+
+**必須基準**:
+- すべてのテストが PASS (0 failures)
+- 画像検証・採点ロジック・Gemini API 呼び出しをカバー
+
+### カバレッジ確認（推奨）
+
+```bash
+pip install coverage
+coverage run -m unittest discover
+coverage report --include='main.py'
+```
+
+**目標**: 80% 以上
+
+### 手動検証（PR マージ前）
+
+1. **ヘルスチェック確認**:
+   ```bash
+   curl http://localhost:8080/healthz
+   ```
+   → 期待: 200 OK
+
+2. **準備状態確認**:
+   ```bash
+   curl http://localhost:8080/readyz
+   ```
+   → 期待: GEMINI_API_KEY 設定時は 200、未設定時は 503
+
+3. **採点 API の動作確認**:
+   - ブラウザで http://localhost:8080 を開く
+   - /drill ページで記号を手描き
+   - 採点結果が正しく返ることを確認
+   - 不合格時に不足特徴が表示されることを確認
+
+### テスト失敗時のデバッグ
+
+```bash
+# 特定のテストクラスのみ実行
+python -m unittest test_main.RateLimitingTest -v
+
+# 詳細スタックトレース付き
+python -m unittest test_main -v 2>&1 | tail -50
+
+# ログレベル設定
+LOGLEVEL=DEBUG python -m unittest discover -v
 ```
 
 ---
@@ -103,11 +157,57 @@ GitHub Actions が Google Cloud に認証するための準備。
 
 3. **Gemini API キーを Secret Manager に登録**
 
+   **単一キー（最小構成）:**
    ```bash
    gcloud secrets create GEMINI_API_KEY \
      --replication-policy="automatic" \
      --data-file=- <<< "your-free-key"
    ```
+
+   **複数キー（推奨、フォールバック対応）:**
+   ```bash
+   # 無料キー（優先度 1）
+   gcloud secrets create GEMINI_API_KEY \
+     --replication-policy="automatic" \
+     --data-file=- <<< "free-key-1"
+
+   # 追加の無料キー（優先度 2、カンマ区切り）
+   gcloud secrets create GEMINI_API_KEYS \
+     --replication-policy="automatic" \
+     --data-file=- <<< "free-key-2,free-key-3"
+
+   # 有料キー（優先度 3、最後のフォールバック）
+   gcloud secrets create GEMINI_PAID_API_KEY \
+     --replication-policy="automatic" \
+     --data-file=- <<< "paid-key"
+   ```
+
+4. **Cloud Run サービスアカウントに IAM 権限を付与**
+
+   ```bash
+   # サービスアカウント取得
+   SA="cloud-run-service-account@YOUR_PROJECT.iam.gserviceaccount.com"
+
+   # 各 Secret に対して Secret Accessor 権限を付与
+   for secret in GEMINI_API_KEY GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
+     gcloud secrets add-iam-policy-binding $secret \
+       --member=serviceAccount:${SA} \
+       --role=roles/secretmanager.secretAccessor \
+       --project=YOUR_PROJECT
+   done
+   ```
+
+5. **Cloud Run にシークレットをマウント**
+
+   Cloud Run サービス更新時に環境変数として参照：
+   ```bash
+   gcloud run services update zukigou-drill \
+     --set-env-vars GEMINI_API_KEY=GEMINI_API_KEY,GEMINI_API_KEYS=GEMINI_API_KEYS,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY \
+     --project=YOUR_PROJECT \
+     --region=asia-northeast1
+   ```
+
+   > **注**: 値は Secret Manager からの参照（環境変数名で指定）ではなく、runtime に Secret Manager から値をロード
 
 ### 手動デプロイ
 
