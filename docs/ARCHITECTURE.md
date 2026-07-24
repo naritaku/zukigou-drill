@@ -115,7 +115,7 @@
 }
 ```
 
-**レスポンス**:
+**レスポンス（200 OK）**:
 ```json
 {
   "passed": true,
@@ -128,14 +128,58 @@
     "similar_single_circle": false
   },
   "mistakes": [],
-  "observation": "..."
+  "observation": "二重円が見られる。内側にフック形状あり。白背景で透明。"
 }
 ```
 
-**エラーレスポンス**:
-- 400: 画像形式/サイズ検証エラー
-- 429: Rate limit（API キー一時停止、バックオフ中）
-- 503: Gemini API 不可（全キー枯渇 or フォールバック試行中）
+**observation フィールド仕様**:
+- 型: `string`
+- 最大長: 500 文字
+- 内容: Gemini vision による特徴観察の詳細（日本語）
+
+**エラーレスポンス詳細**:
+
+#### 400 Bad Request（画像検証エラー）
+```json
+{
+  "error": "image_validation_failed",
+  "message": "Image size exceeds maximum (1000000 bytes)",
+  "code": "SIZE_EXCEEDED",
+  "status": 400
+}
+```
+可能なエラーコード:
+- `FORMAT_INVALID`: PNG 以外の形式
+- `SIZE_EXCEEDED`: バイト数が上限超過
+- `DIMENSIONS_INVALID`: 解像度が上限超過
+- `PIXELS_EXCEEDED`: ピクセル数が上限超過
+- `BLANK_IMAGE`: ほぼ白紙（インク量不足）
+- `SYMBOL_ID_INVALID`: symbol_id が symbols.json に存在しない
+
+#### 429 Too Many Requests（レート制限）
+```json
+{
+  "error": "rate_limited",
+  "message": "API key 'primary' rate limited. Retry after 600 seconds",
+  "key_label": "primary",
+  "retry_after_seconds": 600,
+  "status": 429
+}
+```
+対応ヘッダ: `Retry-After: 600`
+
+#### 503 Service Unavailable（Gemini API 全体が失敗）
+```json
+{
+  "error": "service_unavailable",
+  "message": "All Gemini API keys exhausted or rate limited",
+  "status": 503
+}
+```
+原因:
+- すべての API キーが rate limited 中
+- Gemini API 全体が不可（メンテナンス中など）
+- Secret Manager から API キーを取得できない
 
 ### GET /healthz
 
@@ -389,7 +433,10 @@ rate_limits/{key_label}
 
 - データベース接続なし（Firestore は読み書きのみ、永続的なセッション管理なし）
 - セッション状態なし
-- キャッシュ戦略なし（毎回 symbols.json をロード）
+- キャッシュ戦略:
+  - **symbols.json**: モジュール起動時に一度メモリにロード・キャッシュ（ディスク読み取りなし）
+  - **Gemini API 応答**: キャッシュなし（毎回 API 呼び出し）
+  - **ユーザーセッション**: 状態管理なし
 
 → **Cloud Run scale to zero** が可能。使用量に応じた自動スケール。
 
