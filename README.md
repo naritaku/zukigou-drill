@@ -1,197 +1,105 @@
-# 配線用図記号ドリル
+# 配線用図記号ドリル 📝
 
-電気通信工事施工管理技士 第二次検定の設備系統図に登場する JIS C 0303「構内電気設備の配線用図記号」を、スマホの指描きで練習できる Web ドリル。手描きした記号を AI が特徴ごとに判定し、不合格ならお手本と並べて差分を確認できる。
+電気通信工事施工管理技士試験の設備系統図学習向け Web ドリル。スマホで指描きした JIS C 0303 記号を AI が判定し、フィードバックが得られる。
 
-Google AI Dojo Season 2 提出作品。ログイン不要・成績保存なし・URL 共有だけで使える。
+**ログイン不要・成績保存なし・URL 共有だけで利用可能**
 
-## 設計思想: 判定はコード、観察のみ LLM
+Google AI Dojo Season 2 提出作品
 
-手描きスケッチの合否を LLM に丸投げすると判定がブレる。本アプリでは:
+---
 
-1. 記号ごとに、`required_features`（必須特徴）、`forbidden_features`（存在してはいけない特徴）、`confusable_symbols`（類似記号）を `symbols.json` に定義
-2. Gemini vision は各項目を独立に **true/false** で観察する（JSON Schema 強制・temperature 0）
-3. 合否・スコアはコード側で計算し、必須特徴が全て存在し、禁止特徴と類似記号判定が全て false の場合だけ合格とする
+## 🎯 特徴
 
-これにより、不合格時に「どの特徴が欠けているか」を特定したフィードバックが構造から得られる。
+### 判定の正確さ: コード + AI の組み合わせ
 
-## アーキテクチャ
+従来の LLM 判定のみでは判定がぶれる。本アプリは：
+
+1. **ルーブリック定義**: 記号ごとに必須特徴・禁止特徴・類似記号を `symbols.json` で定義
+2. **AI の観察**: Gemini vision が各特徴を**独立した true/false で観察**（JSON Schema 固定・temperature 0）
+3. **確定的な採点**: 必須特徴がすべて満たされ、禁止特徴・類似記号がすべて false の場合のみ合格
+
+→ 不合格時に「どの特徴が不足しているか」が構造的に分かる
+
+### インフラ
+
+- **DB なし、状態なし** → スケーラブル
+- **Cloud Run scale to zero** → コスト最小化
+- **複数 API キー対応** → 無料枠と有料枠の自動フォールバック
+
+---
+
+## 🏗️ システムアーキテクチャ
 
 ![architecture](docs/architecture.svg)
 
 ```
-[ブラウザ] landing.html / drill.html(canvas 指描き)
-     │  描画を白背景化→トリミング→512px に正規化して POST
+[ブラウザ] landing.html / drill.html (canvas 指描き)
+     │  → PNG 正規化・トリミング
      ▼
-[Cloud Run] FastAPI (main.py)
-     ├─ GET  /              ランディング
-     ├─ GET  /drill         ドリル画面
-     ├─ GET  /api/question  ランダム出題(verified のみ)
-     └─ POST /api/judge     ルーブリック→Gemini 観察→決定的採点
-                │
-                ▼
-         [Gemini 3.1 Flash Lite vision]
+[Cloud Run] FastAPI
+     │  ルーブリック + Gemini vision
+     ▼
+[Gemini 3.1 Flash Lite]
+     │  各特徴を true/false で観察
+     ▼
+[決定的採点]
 ```
 
-DB なし。状態なし。scale to zero。
+---
 
-## ローカル実行
+## 🚀 クイックスタート
+
+### Web で試す
+
+デプロイ済みサービス: https://zukigou-drill-dojo.run.app
+
+### ローカルで実行
 
 ```bash
 pip install -r requirements.txt
 GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
-# → http://localhost:8080
 ```
 
-**推奨設定（複数キー・段階的フォールバック）:**
+詳細は [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照
 
-```bash
-GEMINI_API_KEY="your-free-key" \
-GEMINI_PAID_API_KEY="your-paid-key" \
-GEMINI_MODELS_FREE="gemini-3.1-flash-lite,gemini-3.5-flash" \
-GEMINI_MODELS_PAID="gemini-3.1-flash-lite,gemini-3.5-flash" \
-uvicorn main:app --host 0.0.0.0 --port 8080
-```
+---
 
-**試行順序（自動フォールバック）:**
-1. 無料キー → 3.1 Flash Lite
-2. 無料キー → 3.5 Flash
-3. 有料キー → 3.1 Flash Lite（コスト優先）
-4. 有料キー → 3.5 Flash
+## 🛠️ 技術スタック
 
-**環境変数の詳細:**
-- `GEMINI_API_KEY`: Google AI Studio の無料キー（必須）
-- `GEMINI_PAID_API_KEY`: Google Cloud 有料キー（オプション、無料キーが枯渇時に使用）
-- `GEMINI_MODELS_FREE`: 無料キー用のモデルリスト（カンマ区切り、デフォルト: `gemini-3.1-flash-lite,gemini-3.5-flash`）
-- `GEMINI_MODELS_PAID`: 有料キー用のモデルリスト（カンマ区切り、デフォルト: `gemini-3.1-flash-lite,gemini-3.5-flash`）
+- **Frontend**: HTML5 Canvas + Vanilla JS
+- **Backend**: FastAPI + Python
+- **AI**: Gemini vision (free tier + paid tier fallback)
+- **Infrastructure**: Cloud Run + Cloud Storage + Firestore
+- **CI/CD**: GitHub Actions + Workload Identity Federation
 
+---
 
-## PRレビュー向けビジュアル確認
+## 📚 ドキュメント
 
-Web UI または Web アプリの挙動を変更した場合は、`AGENTS.md` のルールに従って修正前後のスクリーンショットを取得し、タスク実行結果に URL・スクリーンショットパス・確認結果を記載する。
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — 開発・デプロイ手順
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — システム詳細設計
+- [docs/requirements.md](docs/requirements.md) — 要件書
 
-ローカルでの確認環境は次の手順で構築する。
+---
 
-```bash
-python -m pip install -r requirements.txt -r dev-requirements.txt
-python -m playwright install chromium
-python -m playwright install-deps chromium  # Linux でブラウザ依存ライブラリが不足する場合
-python scripts/visual_review.py --path / --label after
-```
+## 📊 収録範囲
 
-`--path /drill` のように対象ページを指定できる。生成物は `artifacts/visual-review/` に保存され、`.gitignore` によりコミット対象外になる。
+電気通信工事施工管理技士 第二次検定の出題実績に基づく 5 カテゴリ：
 
-## デプロイ (Cloud Run)
+- 電話設備 / インターホン / テレビ共聴 / LAN 情報 / 放送設備
 
-デプロイは GitHub Actions の手動実行で行う。GitHub の **Actions → Deploy Cloud Run → Run workflow** を開き、`main` ブランチを選んで実行する。必要に応じて `gemini_model` と `max_instances` を入力する。
+各記号は JIS C 0303:2000 規格票で検証済み
 
-初回だけ、GitHub Actions から Google Cloud に認証するための事前設定が必要。Google Cloud 側で Secret Manager と Workload Identity Federation を設定し、GitHub リポジトリの **Settings → Secrets and variables → Actions → Variables** に次の Variables を登録する。
+---
 
-- `GCP_WORKLOAD_IDENTITY_PROVIDER`: Workload Identity Provider のリソース名
-- `GCP_SERVICE_ACCOUNT`: デプロイ用サービスアカウントのメールアドレス
+## 🔒 プライバシー
 
-例:
+- ユーザー認証・成績保存なし
+- 判定画像は通常保存しない
+- Gemini API 呼び出しのみ外部連携
 
-```text
-GCP_WORKLOAD_IDENTITY_PROVIDER=projects/123456789/locations/global/workloadIdentityPools/github/providers/github-repo
-GCP_SERVICE_ACCOUNT=github-actions-deployer@zukigou-drill-dojo.iam.gserviceaccount.com
-```
+---
 
-`GEMINI_API_KEY` は GitHub Secrets ではなく Google Cloud Secret Manager の `GEMINI_API_KEY` に登録しておく。workflow はこの Secret を Cloud Run の環境変数として参照する。
+## 📄 免責
 
-## 記号の追加方法
-
-`symbols.json` にエントリを追加する。表示用メタデータと判定用ルーブリックを混同しないよう、次の役割を分けて定義する。
-
-- `features`: 学習者やカタログ表示向けの短い説明。どんな用途・見た目の部品なのかを把握するための補助情報であり、合否判定の正本にはしない。
-- `required_features`: 対象記号に必ず存在する構造。判定用ルーブリックの正本として扱い、本数、接続、貫通、内外、方向、塗りつぶし、文字を個別の文に分ける。
-- `forbidden_features`: 対象記号には存在してはいけない構造。類似記号との決定的な差分を優先して書く。
-- `confusable_symbols`: 誤認しやすい記号の決定的特徴。ユーザーのチェックリストにも表示されるため、「加入電話機(同じ二重円で文字だけが大文字T)」のように、記号名と判断基準が分かる文にする。Geminiには対象記号との二者択一ではなく、類似記号の決定的特徴が見えるかを独立判定させる。
-
-`required_features` と `forbidden_features` の各チェックは「画像を見て true/false で答えられる文」にし、「きれい」「十分」「それらしい」のような主観語は避ける。線の歪みは許容し、本数・接続関係・貫通・塗り・文字など識別に必要な位相を厳密にする。新規記号を追加するときは、`ref_svg` に含めた線・円・塗り・文字などの全構成要素が、必ず `required_features` または `forbidden_features` のいずれかのチェック項目に対応していることを確認する。
-
-参考書・規格票で形状を確認できたものだけ `"verified": true` にする。出題対象は verified のみ。`ref_svg` は不合格時の比較表示に利用する。
-
-将来的には、`features` を `required_features` から生成する、または表示用説明を別フィールドへ分離するなど、同じ特徴を手動で二重管理しない構造へ移行する。
-
-## 収録範囲
-
-第二次検定 設問 2 の出題実績(設備系統図中の JIS 記号の名称・機能を問う形式)に基づき、電話設備・インターホン・テレビ共聴・LAN 情報・放送設備の 5 カテゴリから選定。
-
-## docs/
-
-- `requirements.md` — 要件ドキュメント(確定要件・スコープ・スケジュール)
-- `stitch-prompts.md` — UI モック生成に使った Stitch プロンプト
-
-## 判定データの GCS 保存
-
-詳細な GCS セットアップ手順は [deploy_memo/gcp-setup.md](deploy_memo/gcp-setup.md) を参照してください。
-
-### 全判定の保存（品質監視・改善用）
-
-環境変数 `ALL_JUDGMENTS_BUCKET` に GCS バケット名を設定すると、**全ての判定について画像と判定結果を保存**する。個人と紐づかない形で `judgments/` プレフィックスに保存される。
-
-- 保存するもの: 画像 / symbol_id / 判定結果（passed / score / checks / mistakes / observation） / 日付(日単位)
-- 保存しないもの: IP・セッション情報・秒精度の時刻・ユーザー識別子
-- 用途: モデル精度検証、判定ロジック改善、データセット収集
-- バケットにはライフサイクルルール(例: 30 日で自動削除)の設定を推奨
-- 未設定(既定)では保存されない
-
-### 異議報告の保存（disputed フィードバック）
-
-環境変数 `FEEDBACK_BUCKET` に GCS バケット名を設定すると、**ユーザーが「判定に納得できない」を押した場合だけ**、個人と紐づかない形で `disputed/` プレフィックスに保存される。
-
-- 保存するもの: 画像 / symbol_id / 判定結果 / 日付(日単位)
-- 保存しないもの: IP・セッション情報・秒精度の時刻・ユーザー識別子
-- 用途: 判定誤りの分析、学習データとしての活用
-- バケットにはライフサイクルルール(例: 90 日で自動削除)の設定を推奨
-- 未設定(既定)では保存されない
-
-```bash
-# 全判定の保存を有効化（品質監視用、30日で自動削除）
-gcloud storage buckets create gs://zukigou-all-judgments --location=asia-northeast1
-echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/lc.json
-gcloud storage buckets update gs://zukigou-all-judgments --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill --set-env-vars ALL_JUDGMENTS_BUCKET=zukigou-all-judgments
-
-# disputed フィードバック保存を有効化（学習データ用、90日で自動削除）
-gcloud storage buckets create gs://zukigou-feedback --location=asia-northeast1
-echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}' > /tmp/lc.json
-gcloud storage buckets update gs://zukigou-feedback --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill --set-env-vars FEEDBACK_BUCKET=zukigou-feedback
-```
-
-## 公開運用時の保護
-
-- APIはPNG形式・最大サイズ・最大ピクセル数・白紙に近い画像をサーバー側で検証し、無駄な外部API呼び出しを抑制します。
-- Geminiの応答はJSON SchemaとPydantic strict modeで検証します。
-- Gemini判定は `GEMINI_API_KEY` を最優先し、`GEMINI_MODELS` の順にモデルを切り替えながら試行します。無料枠キーや追加キーで失敗した場合だけ、最後に `GEMINI_PAID_API_KEY` を使います。
-- 判定画像は通常保存しません。`FEEDBACK_BUCKET` 設定時も、「判定に納得できない」の明示報告だけを匿名保存します。
-- 組み込みレート制限は単一インスタンス向けの補助機能です。一般公開では Cloud Armor、Cloud Run の `max-instances`、Gemini API quotaを併用してください。
-
-主な環境変数:
-
-```text
-GEMINI_API_KEY          必須。優先利用する無料枠などのGemini APIキー
-GEMINI_PAID_API_KEY     任意。無料枠/追加キーと全モデルの試行後に使う有料Gemini APIキー
-GEMINI_API_KEYS         任意。GEMINI_API_KEY と GEMINI_PAID_API_KEY の間に試す追加キー(カンマ区切り)
-GEMINI_MODEL            既定: gemini-2.5-flash。GEMINI_MODELS 未設定時の単一モデル指定
-GEMINI_MODELS           任意。優先順に試すGeminiモデル(カンマ区切り。例: gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite)
-ALL_JUDGMENTS_BUCKET    任意。全判定の保存先GCSバケット（品質監視用）
-FEEDBACK_BUCKET         任意。異議報告の保存先GCSバケット（disputed フィードバック用）
-MAX_IMAGE_BYTES         既定: 1000000
-MAX_IMAGE_B64_CHARS     既定: 1500000
-MAX_IMAGE_PIXELS        既定: 4000000
-MAX_IMAGE_DIM           既定: 1024
-MIN_INK_PIXELS          既定: 20
-RATE_LIMIT              既定: 20
-RATE_WINDOW             既定: 60秒
-```
-
-ヘルスチェック:
-
-- `GET /healthz`: プロセス生存確認
-- `GET /readyz`: 問題データとGemini設定の準備確認
-
-## 免責
-
-本アプリの判定は Gemini による練習支援であり、図記号としての正しさを保証するものではない。ルーブリックは JIS C 0303:2000 を参照して作成しているが、最終的な正誤の確認は規格票によること。
+本アプリの判定は練習支援用であり、図記号としての正しさを保証しない。最終的な正誤の確認は JIS C 0303:2000 規格票によること。
