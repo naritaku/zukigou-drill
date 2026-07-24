@@ -230,46 +230,6 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
-# 実装の工夫 ①：複数 Gemini キーの自動切替
-
-```python
-# キーの優先順位
-#   1. GEMINI_API_KEY        最優先
-#   2. GEMINI_API_KEYS       複数キーを順に試行
-#   3. GEMINI_PAID_API_KEY   最後の手段（有料枠）
-
-while True:
-    try:
-        return call_gemini(current_key, model)
-    except QuotaExceededError:
-        current_key = next_api_key()   # 次のキーへ
-```
-
-→ **無料枠が尽きても自動で有料枠にフォールバックし、サービスが止まらない。**
-
----
-
-# 実装の工夫 ②：Firestore でのレート制限
-
-```python
-# キーごとに指数バックオフを管理
-if rate_limited:
-    backoff = calc_exponential_backoff(consecutive_failures)
-    #   1 回目 :  75 秒
-    #   2 回目 : 150 秒
-    #   上限   :  24 時間
-    store_in_firestore(key, backoff_until=now + backoff)
-
-@app.on_event("startup")
-def restore_rate_limits():
-    for key, until in firestore.fetch_all_keys():
-        apply_backoff(key, until)   # 再起動後も制限を復元
-```
-
-→ **インスタンス再起動をまたいでも制限状態が引き継がれる。**
-
----
-
 # クイックスタート
 
 Web で試す: https://zukigou-drill-dojo.run.app
@@ -282,16 +242,6 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
 詳細は [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照
-
----
-
-# 開発・運用
-
-## GitHub Actions オートメーション
-
-- **自動デプロイ** — Cloud Run へ本番デプロイ
-- **スケーリング管理** — max_instances パラメータ化
-- **Secret 管理** — Workload Identity Federation で安全化
 
 ---
 
