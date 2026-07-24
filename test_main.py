@@ -250,11 +250,11 @@ class SplitEnvListTest(unittest.TestCase):
         self.assertEqual(result, ["key1", "key2"])
 
 
-class ImageProcessingTest(unittest.TestCase):
-    """画像処理関数のテスト"""
+class FlattenImageTest(unittest.TestCase):
+    """_flatten_image 関数の包括的なテスト"""
 
     def test_flatten_image_rgb_unchanged(self):
-        """RGB 画像は変換されない"""
+        """RGB 画像は RGB のまま返される"""
         img = Image.new("RGB", (64, 64), "white")
         draw = ImageDraw.Draw(img)
         draw.rectangle((10, 10, 50, 50), fill="black")
@@ -275,24 +275,476 @@ class ImageProcessingTest(unittest.TestCase):
         self.assertEqual(result.mode, "RGB")
         self.assertEqual(result.size, (64, 64))
 
+    def test_flatten_image_rgba_transparent_becomes_white(self):
+        """RGBA の透明部分は白で埋められる"""
+        img = Image.new("RGBA", (10, 10), (255, 0, 0, 255))
+        # 左上半分を透明にする
+        rgba_pixels = list(img.getdata())
+        for i in range(50):
+            rgba_pixels[i] = (255, 0, 0, 0)
+        img.putdata(rgba_pixels)
+
+        result = main._flatten_image(img)
+
+        self.assertEqual(result.mode, "RGB")
+        # 透明部分は白になっているはず
+        self.assertEqual(result.getpixel((0, 0)), (255, 255, 255))
+
+    def test_flatten_image_la_to_rgb(self):
+        """LA（グレースケール + アルファ）を RGB に変換"""
+        img = Image.new("LA", (10, 10), (200, 255))
+        result = main._flatten_image(img)
+        self.assertEqual(result.mode, "RGB")
+
+    def test_flatten_image_palette_to_rgb(self):
+        """パレットモード（P）を RGB に変換"""
+        img = Image.new("P", (10, 10))
+        result = main._flatten_image(img)
+        self.assertEqual(result.mode, "RGB")
+
+    def test_flatten_image_grayscale_to_rgb(self):
+        """グレースケール（L）を RGB に変換"""
+        img = Image.new("L", (10, 10), 128)
+        result = main._flatten_image(img)
+        self.assertEqual(result.mode, "RGB")
+
+
+class CountInkPixelsTest(unittest.TestCase):
+    """_count_ink_pixels 関数の包括的なテスト"""
+
     def test_count_ink_pixels_blank_image(self):
-        """白紙画像はインク量が少ない"""
+        """白紙画像はインク量が 0"""
         img = Image.new("RGB", (64, 64), "white")
+        original_threshold = main.INK_THRESHOLD
+        try:
+            main.INK_THRESHOLD = 245
+            count = main._count_ink_pixels(img)
+            self.assertEqual(count, 0)
+        finally:
+            main.INK_THRESHOLD = original_threshold
 
-        count = main._count_ink_pixels(img)
-
-        self.assertEqual(count, 0)
+    def test_count_ink_pixels_black_image(self):
+        """完全に黒い画像はインク量 = ピクセル数"""
+        img = Image.new("RGB", (64, 64), "black")
+        original_threshold = main.INK_THRESHOLD
+        try:
+            main.INK_THRESHOLD = 245
+            count = main._count_ink_pixels(img)
+            self.assertEqual(count, 64 * 64)
+        finally:
+            main.INK_THRESHOLD = original_threshold
 
     def test_count_ink_pixels_with_black_region(self):
         """黒い領域を含む画像はインク量が増える"""
         img = Image.new("RGB", (64, 64), "white")
         draw = ImageDraw.Draw(img)
         draw.rectangle((10, 10, 50, 50), fill="black")
+        original_threshold = main.INK_THRESHOLD
+        try:
+            main.INK_THRESHOLD = 245
+            count = main._count_ink_pixels(img)
+            # 40x40 の黒い領域がある（1600 ピクセル）
+            self.assertGreater(count, 1000)
+            self.assertLessEqual(count, 2000)
+        finally:
+            main.INK_THRESHOLD = original_threshold
 
-        count = main._count_ink_pixels(img)
+    def test_count_ink_pixels_gray_image(self):
+        """グレー画像は閾値に応じてカウント"""
+        img = Image.new("RGB", (10, 10), (128, 128, 128))
+        original_threshold = main.INK_THRESHOLD
+        try:
+            main.INK_THRESHOLD = 245
+            count = main._count_ink_pixels(img)
+            # グレーは閾値（245）より小さいので、すべてのピクセルがカウントされる
+            self.assertEqual(count, 100)
+        finally:
+            main.INK_THRESHOLD = original_threshold
 
-        # 40x40 の黒い領域がある（1600 ピクセル）
-        self.assertGreater(count, 1000)
+    def test_count_ink_pixels_respects_threshold_boundary(self):
+        """閾値の変更が機能する"""
+        img = Image.new("RGB", (10, 10), (250, 250, 250))
+        original_threshold = main.INK_THRESHOLD
+        try:
+            # 閾値を高く設定
+            main.INK_THRESHOLD = 250
+            count = main._count_ink_pixels(img)
+            self.assertEqual(count, 0)
+        finally:
+            main.INK_THRESHOLD = original_threshold
+
+    def test_count_ink_pixels_mixed_threshold(self):
+        """混合画像が閾値で正しく分離される"""
+        img = Image.new("RGB", (10, 10), "white")
+        draw = ImageDraw.Draw(img)
+        # グレーで四角を描画
+        draw.rectangle((0, 0, 4, 4), fill=(200, 200, 200))
+        original_threshold = main.INK_THRESHOLD
+        try:
+            main.INK_THRESHOLD = 220
+            count = main._count_ink_pixels(img)
+            # 5x5 のグレー領域 = 25 ピクセル
+            self.assertEqual(count, 25)
+        finally:
+            main.INK_THRESHOLD = original_threshold
+
+
+class ValidateAndPreparePngTest(unittest.TestCase):
+    """_validate_and_prepare_png 関数の包括的なテスト"""
+
+    def test_validate_and_prepare_png_rejects_invalid_png_format(self):
+        """無効な PNG フォーマットを拒否"""
+        malformed_png = b"\x89PNG\r\n\x1a\n" + b"garbage data"
+        with self.assertRaises(HTTPException) as ctx:
+            main._validate_and_prepare_png(malformed_png)
+        self.assertIn(ctx.exception.status_code, [400, 413])
+
+    def test_validate_and_prepare_png_accepts_valid_png(self):
+        """有効な PNG を受け入れる"""
+        img = Image.new("RGB", (64, 64), "white")
+        draw = ImageDraw.Draw(img)
+        draw.line((4, 4, 60, 60), fill="black", width=3)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        original_min_ink = main.MIN_INK_PIXELS
+        try:
+            main.MIN_INK_PIXELS = 20
+            result = main._validate_and_prepare_png(png_bytes)
+            self.assertTrue(result.startswith(b"\x89PNG\r\n\x1a\n"))
+        finally:
+            main.MIN_INK_PIXELS = original_min_ink
+
+    def test_validate_and_prepare_png_rejects_empty_drawing(self):
+        """ほぼ白紙（インク量不足）の画像を拒否"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        original_min_ink = main.MIN_INK_PIXELS
+        try:
+            main.MIN_INK_PIXELS = 20
+            with self.assertRaises(HTTPException) as ctx:
+                main._validate_and_prepare_png(png_bytes)
+            self.assertEqual(ctx.exception.status_code, 400)
+        finally:
+            main.MIN_INK_PIXELS = original_min_ink
+
+    def test_validate_and_prepare_png_rejects_oversized_image(self):
+        """ピクセル数が MAX_IMAGE_PIXELS を超える画像を拒否"""
+        original_max_pixels = main.MAX_IMAGE_PIXELS
+        try:
+            main.MAX_IMAGE_PIXELS = 100
+            img = Image.new("RGB", (64, 64), "white")
+            draw = ImageDraw.Draw(img)
+            draw.line((0, 0, 63, 63), fill="black", width=1)
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+
+            with self.assertRaises(HTTPException) as ctx:
+                main._validate_and_prepare_png(png_bytes)
+            self.assertEqual(ctx.exception.status_code, 413)
+        finally:
+            main.MAX_IMAGE_PIXELS = original_max_pixels
+
+    def test_validate_and_prepare_png_resizes_oversized_dimension(self):
+        """最長辺が MAX_IMAGE_DIM を超える画像をリサイズ"""
+        original_max_dim = main.MAX_IMAGE_DIM
+        original_min_ink = main.MIN_INK_PIXELS
+        try:
+            main.MAX_IMAGE_DIM = 50
+            main.MIN_INK_PIXELS = 5
+
+            img = Image.new("RGB", (200, 100), "white")
+            draw = ImageDraw.Draw(img)
+            draw.line((10, 10, 190, 90), fill="black", width=3)
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+
+            result = main._validate_and_prepare_png(png_bytes)
+            result_img = Image.open(io.BytesIO(result))
+            self.assertLessEqual(max(result_img.size), main.MAX_IMAGE_DIM)
+        finally:
+            main.MAX_IMAGE_DIM = original_max_dim
+            main.MIN_INK_PIXELS = original_min_ink
+
+    def test_validate_and_prepare_png_converts_rgba_to_rgb(self):
+        """RGBA 画像を RGB に変換"""
+        img = Image.new("RGBA", (64, 64), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        draw.line((4, 4, 60, 60), fill=(0, 0, 0, 255), width=3)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        original_min_ink = main.MIN_INK_PIXELS
+        try:
+            main.MIN_INK_PIXELS = 20
+            result = main._validate_and_prepare_png(png_bytes)
+            result_img = Image.open(io.BytesIO(result))
+            self.assertEqual(result_img.mode, "RGB")
+        finally:
+            main.MIN_INK_PIXELS = original_min_ink
+
+    def test_validate_and_prepare_png_optimizes_output(self):
+        """出力 PNG が最適化される"""
+        img = Image.new("RGB", (64, 64), "white")
+        draw = ImageDraw.Draw(img)
+        draw.line((4, 4, 60, 60), fill="black", width=3)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+
+        original_min_ink = main.MIN_INK_PIXELS
+        try:
+            main.MIN_INK_PIXELS = 20
+            result = main._validate_and_prepare_png(buf.getvalue())
+            self.assertTrue(result.startswith(b"\x89PNG\r\n\x1a\n"))
+        finally:
+            main.MIN_INK_PIXELS = original_min_ink
+
+
+class GenerateVisionResultTest(unittest.TestCase):
+    """_generate_vision_result 関数の包括的なテスト"""
+
+    def setUp(self):
+        main._rate_limited_keys.clear()
+        main._clients.clear()
+
+    def test_generate_vision_result_no_api_keys_raises_503(self):
+        """APIキーが設定されていない場合は 503 エラー"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        with patch.object(main, "_gemini_api_keys", return_value=[]):
+            with self.assertRaises(HTTPException) as ctx:
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_generate_vision_result_valid_response(self):
+        """有効な Gemini 応答を解析する"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True, False],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "観察結果",
+            },
+            ensure_ascii=False,
+        )
+
+        fake_client = Mock()
+        fake_client.models.generate_content.return_value.text = response_text
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", return_value=fake_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertIsInstance(result, main.VisionResult)
+        self.assertEqual(result.required, [True, False])
+        self.assertEqual(result.observation, "観察結果")
+
+    def test_generate_vision_result_falls_back_models(self):
+        """モデルフォールバックが機能する"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "fallback succeeded",
+            },
+            ensure_ascii=False,
+        )
+
+        fake_client = Mock()
+        fake_client.models.generate_content.side_effect = [
+            RuntimeError("model error"),
+            Mock(text=response_text),
+        ]
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", return_value=fake_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertEqual(result.observation, "fallback succeeded")
+        self.assertEqual(fake_client.models.generate_content.call_count, 2)
+
+    def test_generate_vision_result_falls_back_api_keys(self):
+        """APIキーフォールバックが機能する"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "fallback to paid succeeded",
+            },
+            ensure_ascii=False,
+        )
+
+        free_client = Mock()
+        paid_client = Mock()
+        free_client.models.generate_content.side_effect = RuntimeError("free tier failed")
+        paid_client.models.generate_content.return_value.text = response_text
+
+        def get_client(api_key=None):
+            return {"free-key": free_client, "paid-key": paid_client}[api_key]
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", side_effect=get_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertEqual(result.observation, "fallback to paid succeeded")
+        paid_client.models.generate_content.assert_called_once()
+
+    def test_generate_vision_result_handles_validation_error(self):
+        """ValidationError 時は次のモデルにフォールバック"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "valid response",
+            },
+            ensure_ascii=False,
+        )
+
+        fake_client = Mock()
+        fake_client.models.generate_content.side_effect = [
+            Mock(text="invalid json"),
+            Mock(text=response_text),
+        ]
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", return_value=fake_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertEqual(result.observation, "valid response")
+
+    def test_generate_vision_result_rate_limit_429_marks_key(self):
+        """429 エラーでキーを記録して次のキーをトライ"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "paid key succeeded",
+            },
+            ensure_ascii=False,
+        )
+
+        free_client = Mock()
+        paid_client = Mock()
+
+        rate_limit_error = RuntimeError("rate limited")
+        rate_limit_error.status_code = 429
+        free_client.models.generate_content.side_effect = rate_limit_error
+        paid_client.models.generate_content.return_value.text = response_text
+
+        def get_client(api_key=None):
+            return {"free-key": free_client, "paid-key": paid_client}[api_key]
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", side_effect=get_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertEqual(result.observation, "paid key succeeded")
+        # free-key がレート制限に記録されたか確認
+        status = main._get_rate_limit_status("free-key")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["consecutive_count"], 1)
+
+    def test_generate_vision_result_skips_rate_limited_keys(self):
+        """レート制限中のキーはスキップ"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        response_text = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "paid key only",
+            },
+            ensure_ascii=False,
+        )
+
+        free_client = Mock()
+        paid_client = Mock()
+        paid_client.models.generate_content.return_value.text = response_text
+
+        def get_client(api_key=None):
+            return {"free-key": free_client, "paid-key": paid_client}[api_key]
+
+        # free-key を事前にレート制限状態にする
+        main._mark_rate_limited("free-key")
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", side_effect=get_client):
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+
+        self.assertEqual(result.observation, "paid key only")
+        # free_client は呼び出されていないはず
+        free_client.models.generate_content.assert_not_called()
+
+    def test_generate_vision_result_all_keys_fail_raises_503(self):
+        """すべてのキーが失敗したら 503 エラー"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        fake_client = Mock()
+        fake_client.models.generate_content.side_effect = RuntimeError("all failed")
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", return_value=fake_client):
+            with self.assertRaises(HTTPException) as ctx:
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            self.assertEqual(ctx.exception.status_code, 503)
 
 
 class EnvironmentConfigTest(unittest.TestCase):
