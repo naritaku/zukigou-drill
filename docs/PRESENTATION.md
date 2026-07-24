@@ -5,9 +5,9 @@ paginate: true
 footer: "配線用図記号ドリル | Google AI Dojo Season 2"
 style: |
   section {
-    background: linear-gradient(135deg, #1a2a6c 0%, #2c5364 100%);
-    color: #f5f7fa;
-    font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+    background: #f3f4f6;
+    color: #1a1c1e;
+    font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", sans-serif;
     font-size: 26px;
     line-height: 1.6;
     padding: 60px 70px;
@@ -16,29 +16,38 @@ style: |
     font-size: 2.4em;
     margin-bottom: 0.4em;
     line-height: 1.25;
+    color: #003e89;
   }
   section h2 {
     font-size: 1.5em;
     margin-bottom: 0.6em;
-    color: #7fdbff;
+    color: #003e89;
+    border-bottom: 2px solid #003e89;
+    padding-bottom: 0.3em;
   }
   section h3 {
     font-size: 1.05em;
-    color: #ffd479;
+    color: #003e89;
     margin-bottom: 0.3em;
+    font-weight: 700;
   }
-  strong { color: #7fdbff; }
+  strong { color: #003e89; font-weight: 700; }
   code {
-    background-color: rgba(255, 255, 255, 0.14);
+    background-color: #eef2fa;
+    color: #003e89;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 2px;
     font-size: 0.9em;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
   }
   pre {
-    background-color: rgba(0, 0, 0, 0.28);
-    border-radius: 8px;
+    background-color: #eef2fa;
+    color: #1a1c1e;
+    border-left: 3px solid #003e89;
+    border-radius: 2px;
     font-size: 0.72em;
     line-height: 1.5;
+    padding: 12px;
   }
   ul li, ol li { margin-bottom: 0.35em; }
   table {
@@ -46,10 +55,16 @@ style: |
     border-collapse: collapse;
   }
   table th {
-    background-color: rgba(127, 219, 255, 0.18);
+    background-color: #eef2fa;
+    color: #003e89;
     padding: 8px 14px;
+    border-bottom: 2px solid #003e89;
+    font-weight: 700;
   }
-  table td { padding: 8px 14px; }
+  table td { 
+    padding: 8px 14px;
+    border-bottom: 1px solid #dfe3e8;
+  }
   .columns {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -61,7 +76,7 @@ style: |
     justify-content: center;
     text-align: center;
   }
-  footer { color: rgba(245, 247, 250, 0.6); font-size: 14px; }
+  footer { color: #5a6270; font-size: 14px; }
 ---
 
 # 配線用図記号ドリル
