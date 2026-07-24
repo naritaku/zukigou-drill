@@ -115,12 +115,6 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 → 不合格時に「どの特徴が不足しているか」が構造的に分かる
 
-### インフラ
-
-- **DB なし、状態なし** → スケーラブル
-- **Cloud Run scale to zero** → コスト最小化
-- **複数 API キー対応** → 無料枠と有料枠の自動フォールバック
-
 ---
 
 # 確定的採点エンジン
