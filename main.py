@@ -17,7 +17,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -40,9 +40,9 @@ INK_THRESHOLD = int(os.environ.get("INK_THRESHOLD", "245"))
 MAX_OBSERVATION_CHARS = 500
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-MODEL = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
+ALL_JUDGMENTS_BUCKET = os.environ.get("ALL_JUDGMENTS_BUCKET", "")
 
 
 def _load_symbols() -> dict[str, dict[str, Any]]:
@@ -85,6 +85,28 @@ _clients: dict[str, genai.Client] = {}
 _storage_client: Any = None
 _client_lock = threading.Lock()
 _storage_lock = threading.Lock()
+_rate_limited_keys: dict[str, tuple[float, int]] = {}  # APIキー → (レート制限時刻, 連続失敗回数)
+_rate_limit_lock = threading.Lock()
+
+# 段階的な指数バックオフ（秒単位）
+# インデックス = 連続失敗回数 - 1（0-indexed）
+_BACKOFF_SECONDS = [
+    75,      # 失敗1回目：75秒（1分 + 15秒バッファ）
+    600,     # 失敗2回目：10分
+    3600,    # 失敗3回目：1時間
+    10800,   # 失敗4回目：3時間
+    18000,   # 失敗5回目：5時間
+    36000,   # 失敗6回目：10時間
+    86400,   # 失敗7回目以上：24時間
+]
+
+
+class RateLimitStatus(TypedDict):
+    """APIキーのレート制限状態情報。"""
+
+    remaining: float
+    consecutive_count: int
+    backoff_seconds: int
 
 
 def _split_env_list(value: str | None) -> list[str]:
@@ -93,16 +115,24 @@ def _split_env_list(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _gemini_models() -> list[str]:
-    """Return model fallback order without duplicates."""
-    models = _split_env_list(os.environ.get("GEMINI_MODELS"))
-    if not models:
-        models = [os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)]
-    result: list[str] = []
-    for model in models:
-        if model and model not in result:
-            result.append(model)
-    return result
+def _gemini_models(key_label: str | None = None) -> list[str]:
+    """Return model fallback order by account type.
+
+    Free tier (primary/extra_*): 3.1 Flash Lite → 3.5 Flash
+    Paid tier (paid): 3.1 Flash Lite (cost-effective) → 3.5 Flash
+    """
+    if key_label == "paid":
+        # Paid accounts: prioritize cost-effective 3.1 Flash Lite
+        paid_models = _split_env_list(os.environ.get("GEMINI_MODELS_PAID"))
+        if paid_models:
+            return paid_models
+        return ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    else:
+        # Free tier: 3.1 Flash Lite → 3.5 Flash
+        free_models = _split_env_list(os.environ.get("GEMINI_MODELS_FREE"))
+        if free_models:
+            return free_models
+        return ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
 
 def _gemini_api_keys() -> list[tuple[str, str]]:
@@ -134,16 +164,82 @@ def _get_genai_client(api_key: str | None = None) -> genai.Client:
     return client
 
 
+def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
+    """APIキーのレート制限状態を確認（ロック保持）。
+
+    戻り値：
+      None: レート制限なし
+      RateLimitStatus: 制限中の詳細情報
+    """
+    now = time.time()
+    with _rate_limit_lock:
+        if api_key not in _rate_limited_keys:
+            return None
+
+        limited_at, consecutive_count = _rate_limited_keys[api_key]
+
+        # 連続失敗回数に応じたバックオフ時間を取得（0-indexed）
+        backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
+        backoff_seconds = _BACKOFF_SECONDS[backoff_index]
+        elapsed = now - limited_at
+
+        if elapsed >= backoff_seconds:
+            del _rate_limited_keys[api_key]
+            return None
+
+        return {
+            "remaining": backoff_seconds - elapsed,
+            "consecutive_count": consecutive_count,
+            "backoff_seconds": backoff_seconds,
+        }
+
+
+def _mark_rate_limited(api_key: str) -> None:
+    """429エラーを記録し、バックオフカウントをインクリメント（ロック保持）。"""
+    now = time.time()
+    with _rate_limit_lock:
+        if api_key in _rate_limited_keys:
+            limited_at, consecutive_count = _rate_limited_keys[api_key]
+            consecutive_count = min(consecutive_count + 1, len(_BACKOFF_SECONDS))
+        else:
+            consecutive_count = 1
+        _rate_limited_keys[api_key] = (now, consecutive_count)
+
+
 def _generate_vision_result(image: bytes, prompt: str, symbol_id: str) -> VisionResult:
     api_keys = _gemini_api_keys()
-    models = _gemini_models()
     if not api_keys:
         raise HTTPException(503, "judgment service is not configured")
-    if not models:
-        raise HTTPException(503, "judgment model is not configured")
 
     last_error: Exception | None = None
     for key_label, api_key in api_keys:
+        # レート制限中のキーはスキップ
+        rate_limit_info = _get_rate_limit_status(api_key)
+        if rate_limit_info:
+            if rate_limit_info["consecutive_count"] >= 3:
+                logger.warning(
+                    "API key in backoff due to repeated rate limits; skipping",
+                    extra={
+                        "key_label": key_label,
+                        "consecutive_failures": rate_limit_info["consecutive_count"],
+                        "backoff_minutes": rate_limit_info["backoff_seconds"] / 60,
+                        "remaining_seconds": max(0, int(rate_limit_info["remaining"])),
+                    },
+                )
+            else:
+                logger.debug(
+                    "API key temporarily rate limited; skipping",
+                    extra={
+                        "key_label": key_label,
+                        "consecutive_failures": rate_limit_info["consecutive_count"],
+                        "remaining_seconds": max(0, int(rate_limit_info["remaining"])),
+                    },
+                )
+            continue
+
+        models = _gemini_models(key_label)
+        if not models:
+            raise HTTPException(503, "judgment model is not configured")
         for model in models:
             try:
                 response = _get_genai_client(api_key).models.generate_content(
@@ -164,12 +260,24 @@ def _generate_vision_result(image: bytes, prompt: str, symbol_id: str) -> Vision
                 )
             except Exception as exc:
                 last_error = exc
+                # レート制限エラー（429）を検出したら、このキーを記録して次のキーを試す
+                if getattr(exc, "status_code", None) == 429:
+                    _mark_rate_limited(api_key)
+                    logger.warning(
+                        "rate limit reached; marking API key as rate limited",
+                        extra={"symbol_id": symbol_id, "key_label": key_label},
+                    )
+                    break  # このキーのモデル試行をスキップして次のキーへ
                 logger.warning(
                     "Gemini candidate failed; trying next Gemini candidate",
                     extra={"symbol_id": symbol_id, "model": model, "key_label": key_label},
                 )
 
-    logger.exception("all Gemini candidates failed", extra={"symbol_id": symbol_id}, exc_info=last_error)
+    error_msg = str(last_error) if last_error else "unknown error"
+    logger.error(
+        "all Gemini candidates failed (rate limiting or API unavailable)",
+        extra={"symbol_id": symbol_id, "error": error_msg},
+    )
     raise HTTPException(503, "judgment service unavailable") from last_error
 
 
@@ -237,10 +345,16 @@ def _count_ink_pixels(img: Image.Image) -> int:
     return sum(1 for value in gray.getdata() if value < INK_THRESHOLD)
 
 
-def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> None:
-    """明示的な異議報告だけを匿名保存する。失敗は判定処理に波及させない。"""
+def _save_to_gcs(
+    bucket_name: str,
+    symbol_id: str,
+    image: bytes,
+    judgment_data: dict[str, Any],
+    prefix: str = "judgments",
+) -> None:
+    """GCS にエンドポイントの判定データと画像を保存する。失敗は判定処理に波及させない。"""
     global _storage_client
-    if not FEEDBACK_BUCKET:
+    if not bucket_name:
         return
     try:
         if _storage_client is None:
@@ -249,15 +363,25 @@ def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> No
                     from google.cloud import storage
 
                     _storage_client = storage.Client()
-        bucket = _storage_client.bucket(FEEDBACK_BUCKET)
+        bucket = _storage_client.bucket(bucket_name)
         day = datetime.date.today().isoformat()
-        name = f"disputed/{symbol_id}/{day}/{uuid.uuid4().hex}"
+        name = f"{prefix}/{symbol_id}/{day}/{uuid.uuid4().hex}"
         bucket.blob(f"{name}.png").upload_from_string(image, content_type="image/png")
         bucket.blob(f"{name}.json").upload_from_string(
-            json.dumps(judgment, ensure_ascii=False), content_type="application/json"
+            json.dumps(judgment_data, ensure_ascii=False), content_type="application/json"
         )
+        logger.debug(f"saved to {bucket_name}/{name}", extra={"symbol_id": symbol_id})
     except Exception:
-        logger.exception("failed to save disputed feedback", extra={"symbol_id": symbol_id})
+        logger.exception(
+            "failed to save judgment data to GCS",
+            extra={"symbol_id": symbol_id, "bucket": bucket_name, "prefix": prefix},
+        )
+
+
+def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> None:
+    """明示的な異議報告だけを匿名保存する。失敗は判定処理に波及させない。"""
+    judgment["disputed"] = True
+    _save_to_gcs(FEEDBACK_BUCKET, symbol_id, image, judgment, prefix="disputed")
 
 
 app = FastAPI(title="KENZU", docs_url=None, redoc_url=None)
@@ -488,10 +612,26 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
     mistakes += [f"{value}と判別できない可能性があります" for value in hit_confusions]
 
     n_ok = sum(check["ok"] for check in checks)
+    passed = n_ok == len(checks)
+    score = f"{n_ok}/{len(checks)}"
+
+    # GCS に全判定を保存
+    judgment_data = {
+        "symbol_id": req.symbol_id,
+        "passed": passed,
+        "score": score,
+        "checks": checks,
+        "mistakes": mistakes,
+        "observation": result.observation,
+        "disputed": False,
+        "saved_type": "judgment",
+    }
+    _save_to_gcs(ALL_JUDGMENTS_BUCKET, req.symbol_id, image, judgment_data, prefix="judgments")
+
     return {
         "symbol_id": req.symbol_id,
-        "passed": n_ok == len(checks),
-        "score": f"{n_ok}/{len(checks)}",
+        "passed": passed,
+        "score": score,
         "checks": checks,
         "mistakes": mistakes,
         "observation": result.observation,

@@ -154,5 +154,47 @@ class JudgeEndpointTest(unittest.TestCase):
         save_feedback.assert_not_called()
 
 
+class RateLimitingTest(unittest.TestCase):
+    def setUp(self):
+        main._rate_limited_keys.clear()
+
+    def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
+        status = main._get_rate_limit_status("test-key")
+        self.assertIsNone(status)
+
+    def test_mark_rate_limited_increments_consecutive_count(self):
+        main._mark_rate_limited("test-key")
+        status = main._get_rate_limit_status("test-key")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["consecutive_count"], 1)
+
+    def test_mark_rate_limited_uses_correct_backoff_time(self):
+        for attempt in range(1, 4):
+            main._mark_rate_limited("test-key")
+        status = main._get_rate_limit_status("test-key")
+        self.assertIsNotNone(status)
+        expected_backoff = main._BACKOFF_SECONDS[2]  # 3rd attempt
+        self.assertEqual(status["backoff_seconds"], expected_backoff)
+
+
+class GCSTest(unittest.TestCase):
+    def setUp(self):
+        self.symbol = next(symbol for symbol in main.SYMBOLS.values() if symbol["verified"])
+
+    def test_all_judgments_bucket_configured(self):
+        # ALL_JUDGMENTS_BUCKET が定義されていることを確認
+        self.assertTrue(hasattr(main, "ALL_JUDGMENTS_BUCKET"))
+
+    def test_save_to_gcs_skips_when_bucket_not_configured(self):
+        # バケットが空の場合、保存がスキップされることを確認
+        original_bucket = main.ALL_JUDGMENTS_BUCKET
+        try:
+            main.ALL_JUDGMENTS_BUCKET = ""
+            main._save_to_gcs(b"test-image", {"test": "data"}, self.symbol["id"], "judgments")
+            # 例外が発生しないことを確認
+        finally:
+            main.ALL_JUDGMENTS_BUCKET = original_bucket
+
+
 if __name__ == "__main__":
     unittest.main()

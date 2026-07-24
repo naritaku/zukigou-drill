@@ -2,8 +2,11 @@ __pycache__/
 *.pyc
 *.py[cod]
 .env
+.env.local
+.env*.local
 .pytest_cache/
 .venv/
 venv/
 .DS_Store
 artifacts/
+deploy_memo/
