@@ -105,15 +105,60 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 # ソリューション：本アプリの特徴
 
-### 判定の正確さ: コード + AI の組み合わせ
+### 安く・早く・簡単に判定できる
 
-従来の LLM 判定のみでは判定がぶれる。本アプリは：
+<div class="columns">
+<div>
 
-1. **ルーブリック定義**: 記号ごとに必須特徴・禁止特徴・類似記号を `symbols.json` で定義
-2. **AI の観察**: Gemini vision が各特徴を**独立した true/false で観察**（JSON Schema 固定・temperature 0）
-3. **確定的な採点**: 必須特徴がすべて満たされ、禁止特徴・類似記号がすべて false の場合のみ合格
+**指描き → 即座に判定**
+- スマートフォン Canvas で描画
+- PNG に正規化
+- リアルタイム判定＆フィードバック
 
-→ 不合格時に「どの特徴が不足しているか」が構造的に分かる
+**「どこが間違ったか」が明確**
+- 不合格時に理由を構造的に説明
+- 「必須特徴が不足」「禁止特徴あり」が分かる
+
+</div>
+<div>
+
+**判定の正確さを確保**
+- LLM のみでは判定がぶれる
+- ルーブリック定義 + AI 観察 + コード採点
+- 3 層構造で再現性を確保
+
+</div>
+</div>
+
+---
+
+# デモ：その場でお試しください
+
+<div class="columns">
+<div>
+
+### 体験の流れ（30 秒）
+
+1. 記号を選ぶ
+2. 指で描く
+3. 「判定」をタップ
+4. 合否と「どこが違うか」が即表示
+
+**ログイン不要・インストール不要**
+
+いま QR コードからアクセスできます →
+
+</div>
+<div style="text-align: center;">
+
+<div style="display: inline-block; padding: 24px; background: #ffffff; border-radius: 4px;">
+
+![w:250](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=2&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+
+</div>
+
+</div>
+</div>
 
 ---
 
@@ -127,7 +172,7 @@ powered by [@naritaku](https://github.com/naritaku/)
     禁止特徴 : 「塗りつぶしはないか？」
     類似記号 : 「他記号と区別できるか？」
 
-② Gemini vision で観察  (Temperature 0 / JSON Schema 固定)
+② Gemini Flash Lite で観察  (Temperature 0 / JSON Schema 固定)
     各特徴を独立した true / false で判定
     → 同じ入力なら同じ出力
 
@@ -142,25 +187,9 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 # システムアーキテクチャ
 
-```text
-[ スマートフォン ]
-    HTML5 Canvas + JS で指描き
-    画像を正規化・トリミング・PNG 化
-        ↓
-[ Cloud Run ] FastAPI + Python
-    Rate Limiting (Firestore)
-    ルーブリック採点エンジン
-    Gemini API 呼び出し
-        ↓
-[ Gemini Flash Lite ]
-    各特徴を true / false で観察
-        ↓
-[ JSON レスポンス ]
-    { passed, score, checks, mistakes }
-        ↓
-[ ブラウザ UI ]
-    合否・スコア・不足特徴を表示
-```
+![w:1080](architecture.svg)
+
+3 コンポーネントのみ。観察は AI、採点はコード、状態はレート制限だけ。
 
 ---
 
@@ -169,10 +198,11 @@ powered by [@naritaku](https://github.com/naritaku/)
 <div class="columns">
 <div>
 
-### DB を持たないステートレス設計
+### 成績データを保存しない設計
 - 1 リクエスト = 1 判定の独立処理
 - Cloud Run が **scale to zero**
 - 無負荷時のコストはほぼゼロ
+- 状態は右記のレート制限のみ
 
 ### 複数 API キー対応
 - 無料枠（1 日 100 回）を優先
@@ -195,13 +225,24 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
+# コスト試算：月 1000 判定での概算
+
+- **Cloud Run**: リクエスト課金 ≈ **$0.02/月**（scale to zero）
+- **Gemini API**: 無料枠 1 日 100 回（月 3000 回相当）→ **$0**
+- **Firestore**: 無料枠（読み取り 5 万回/日）内 → **$0**
+- **合計**: **実質 月 $1 未満**
+
+→ 無料枠を超えても有料キーへ自動フォールバック。スケールしても限界費用は数ドル。
+
+---
+
 # 技術スタック
 
 | レイヤー | 採用技術 |
 |---|---|
 | **フロントエンド** | HTML5 Canvas + Vanilla JavaScript |
 | **バックエンド** | FastAPI + Python |
-| **AI** | Google Gemini vision API |
+| **AI** | Gemini API（Flash Lite / 画像認識） |
 | **インフラ** | Cloud Run + Cloud Storage + Firestore |
 | **CI / CD** | GitHub Actions + Workload Identity Federation |
 | **監視** | Cloud Logging + Cloud Monitoring |
@@ -232,7 +273,7 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 # クイックスタート
 
-Web で試す: https://zukigou-drill-dojo.run.app
+Web で試す: https://zukigou-drill-vnoxzmytga-an.a.run.app
 
 ローカルで実行:
 
@@ -241,36 +282,7 @@ pip install -r requirements.txt
 GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
-詳細は [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照
-
----
-
-# 提出のねらい
-
-- 学習支援の現場化 — 実際の試験対策に直結
-- Gemini vision の新用途 — 医療・工業以外での活用例
-- 確定的 AI — LLM の不確実性を構造的に解決
-- GCP ベストプラクティス — Firestore・Cloud Run・IAM の連携
-
-## 今後の展開
-
-- 他の技能試験対応 — 建築・電気・配管など
-- モバイルアプリ化 — iOS/Android ネイティブ版
-- 学習分析 — 学習者の弱点を可視化
-- 学校向け管理画面 — 教育機関での活用
-
----
-
-# コスト試算
-
-## 月 1000 ユーザーでの概算
-
-- **Cloud Run**: $0.000015/リクエスト × 1000 判定/月 = **$0.015/月**
-- **Gemini API**: 無料枠 月 1500 リクエスト + 超過時は有料
-- **Firestore**: 読み書き操作数による従量課金、見積 **$1～5/月**
-- **合計**: **月 $5～10** の低コスト運用
-
-→ **スケールしても限界費用が低い。**
+詳細は [DEVELOPMENT.md](DEVELOPMENT.md) を参照
 
 ---
 
@@ -278,10 +290,10 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 配線用図記号ドリル
 
-- **課題**: 試験対策の採点ループが遅い
-- **解法**: AI と コード を分離した確定的採点
-- **成果**: 26 個の JIS 記号対応、Firestore・複数キーで堅牢性確保
-- **展開**: 他試験・ネイティブアプリへの横展開予定
+- **課題**: 参考書を持ち歩かず、スマホで手を動かして覚えたい
+- **解法**: AI の観察とコードの採点を分離した確定的判定
+- **成果**: JIS C 0303 記号 26 個に対応、実質 $0 で運用中
+- **いま試せます**: ログイン不要・URL 共有だけで利用可能
 
 ---
 
@@ -296,4 +308,4 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 </div>
 
 - GitHub: https://github.com/naritaku/zukigou-drill
-- ドキュメント: [DEVELOPMENT.md](docs/DEVELOPMENT.md) / [ARCHITECTURE.md](docs/ARCHITECTURE.md) / [requirements.md](docs/requirements.md)
+- ドキュメント: [DEVELOPMENT.md](DEVELOPMENT.md) / [ARCHITECTURE.md](ARCHITECTURE.md) / [requirements.md](requirements.md)
