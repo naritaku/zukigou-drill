@@ -29,7 +29,7 @@ Google AI Dojo Season 2 提出作品。ログイン不要・成績保存なし�
      └─ POST /api/judge     ルーブリック→Gemini 観察→決定的採点
                 │
                 ▼
-         [Gemini 2.5 Flash vision]
+         [Gemini 3.1 Flash Lite vision]
 ```
 
 DB なし。状態なし。scale to zero。
@@ -38,9 +38,31 @@ DB なし。状態なし。scale to zero。
 
 ```bash
 pip install -r requirements.txt
-GEMINI_API_KEY="your-key" uvicorn main:app --host 0.0.0.0 --port 8080
+GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 # → http://localhost:8080
 ```
+
+**推奨設定（複数キー・段階的フォールバック）:**
+
+```bash
+GEMINI_API_KEY="your-free-key" \
+GEMINI_PAID_API_KEY="your-paid-key" \
+GEMINI_MODELS_FREE="gemini-3.1-flash-lite,gemini-3.5-flash" \
+GEMINI_MODELS_PAID="gemini-3.1-flash-lite,gemini-3.5-flash" \
+uvicorn main:app --host 0.0.0.0 --port 8080
+```
+
+**試行順序（自動フォールバック）:**
+1. 無料キー → 3.1 Flash Lite
+2. 無料キー → 3.5 Flash
+3. 有料キー → 3.1 Flash Lite（コスト優先）
+4. 有料キー → 3.5 Flash
+
+**環境変数の詳細:**
+- `GEMINI_API_KEY`: Google AI Studio の無料キー（必須）
+- `GEMINI_PAID_API_KEY`: Google Cloud 有料キー（オプション、無料キーが枯渇時に使用）
+- `GEMINI_MODELS_FREE`: 無料キー用のモデルリスト（カンマ区切り、デフォルト: `gemini-3.1-flash-lite,gemini-3.5-flash`）
+- `GEMINI_MODELS_PAID`: 有料キー用のモデルリスト（カンマ区切り、デフォルト: `gemini-3.1-flash-lite,gemini-3.5-flash`）
 
 
 ## PRレビュー向けビジュアル確認
@@ -100,17 +122,38 @@ GCP_SERVICE_ACCOUNT=github-actions-deployer@zukigou-drill-dojo.iam.gserviceaccou
 - `requirements.md` — 要件ドキュメント(確定要件・スコープ・スケジュール)
 - `stitch-prompts.md` — UI モック生成に使った Stitch プロンプト
 
-## 判定改善のための匿名フィードバック保存
+## 判定データの GCS 保存
 
-環境変数 `FEEDBACK_BUCKET` に GCS バケット名を設定すると、**ユーザーが「判定に納得できない」を押した場合だけ**、個人と紐づかない形で `disputed/` プレフィックスに保存する。通常の判定画像と判定結果は保存しない。
+詳細な GCS セットアップ手順は [deploy_memo/gcp-setup.md](deploy_memo/gcp-setup.md) を参照してください。
+
+### 全判定の保存（品質監視・改善用）
+
+環境変数 `ALL_JUDGMENTS_BUCKET` に GCS バケット名を設定すると、**全ての判定について画像と判定結果を保存**する。個人と紐づかない形で `judgments/` プレフィックスに保存される。
+
+- 保存するもの: 画像 / symbol_id / 判定結果（passed / score / checks / mistakes / observation） / 日付(日単位)
+- 保存しないもの: IP・セッション情報・秒精度の時刻・ユーザー識別子
+- 用途: モデル精度検証、判定ロジック改善、データセット収集
+- バケットにはライフサイクルルール(例: 30 日で自動削除)の設定を推奨
+- 未設定(既定)では保存されない
+
+### 異議報告の保存（disputed フィードバック）
+
+環境変数 `FEEDBACK_BUCKET` に GCS バケット名を設定すると、**ユーザーが「判定に納得できない」を押した場合だけ**、個人と紐づかない形で `disputed/` プレフィックスに保存される。
 
 - 保存するもの: 画像 / symbol_id / 判定結果 / 日付(日単位)
 - 保存しないもの: IP・セッション情報・秒精度の時刻・ユーザー識別子
+- 用途: 判定誤りの分析、学習データとしての活用
 - バケットにはライフサイクルルール(例: 90 日で自動削除)の設定を推奨
-- 未設定(既定)では一切保存しない
+- 未設定(既定)では保存されない
 
 ```bash
-# 有効化の例
+# 全判定の保存を有効化（品質監視用、30日で自動削除）
+gcloud storage buckets create gs://zukigou-all-judgments --location=asia-northeast1
+echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/lc.json
+gcloud storage buckets update gs://zukigou-all-judgments --lifecycle-file=/tmp/lc.json
+gcloud run services update zukigou-drill --set-env-vars ALL_JUDGMENTS_BUCKET=zukigou-all-judgments
+
+# disputed フィードバック保存を有効化（学習データ用、90日で自動削除）
 gcloud storage buckets create gs://zukigou-feedback --location=asia-northeast1
 echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}' > /tmp/lc.json
 gcloud storage buckets update gs://zukigou-feedback --lifecycle-file=/tmp/lc.json
@@ -133,7 +176,8 @@ GEMINI_PAID_API_KEY     任意。無料枠/追加キーと全モデルの試行�
 GEMINI_API_KEYS         任意。GEMINI_API_KEY と GEMINI_PAID_API_KEY の間に試す追加キー(カンマ区切り)
 GEMINI_MODEL            既定: gemini-2.5-flash。GEMINI_MODELS 未設定時の単一モデル指定
 GEMINI_MODELS           任意。優先順に試すGeminiモデル(カンマ区切り。例: gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite)
-FEEDBACK_BUCKET         任意。異議報告の保存先GCSバケット
+ALL_JUDGMENTS_BUCKET    任意。全判定の保存先GCSバケット（品質監視用）
+FEEDBACK_BUCKET         任意。異議報告の保存先GCSバケット（disputed フィードバック用）
 MAX_IMAGE_BYTES         既定: 1000000
 MAX_IMAGE_B64_CHARS     既定: 1500000
 MAX_IMAGE_PIXELS        既定: 4000000
