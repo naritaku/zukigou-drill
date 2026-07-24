@@ -103,31 +103,34 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
-# ソリューション：本アプリの特徴
+# ソリューション：スマホだけで安く・早く・簡単に
 
-### 安く・早く・簡単に判定できる
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2em; margin-top: 1.2em;">
 
-<div class="columns">
-<div>
+<div style="background: #ffffff; border-top: 4px solid #003e89; border-radius: 4px; padding: 24px;">
 
-**指描き → 即座に判定**
-- スマートフォン Canvas で描画
-- PNG に正規化
-- リアルタイム判定＆フィードバック
+### ✍️ 指で描いて即判定
 
-**「どこが間違ったか」が明確**
-- 不合格時に理由を構造的に説明
-- 「必須特徴が不足」「禁止特徴あり」が分かる
+Canvas に指描きするだけ。リアルタイムに合否フィードバック
 
 </div>
-<div>
 
-**判定の正確さを確保**
-- LLM のみでは判定がぶれる
-- ルーブリック定義 + AI 観察 + コード採点
-- 3 層構造で再現性を確保
+<div style="background: #ffffff; border-top: 4px solid #003e89; border-radius: 4px; padding: 24px;">
+
+### 🔍 間違いの理由が明確
+
+「必須特徴が不足」「禁止特徴あり」を構造的に提示。その場で修正できる
 
 </div>
+
+<div style="background: #ffffff; border-top: 4px solid #003e89; border-radius: 4px; padding: 24px;">
+
+### 🎯 判定がぶれない
+
+LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コード採点の 3 層で解決
+
+</div>
+
 </div>
 
 ---
