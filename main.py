@@ -40,7 +40,8 @@ INK_THRESHOLD = int(os.environ.get("INK_THRESHOLD", "245"))
 MAX_OBSERVATION_CHARS = 500
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+MODEL = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
 
 
@@ -80,23 +81,96 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
 
 
 SYMBOLS = _load_symbols()
-_client: genai.Client | None = None
+_clients: dict[str, genai.Client] = {}
 _storage_client: Any = None
 _client_lock = threading.Lock()
 _storage_lock = threading.Lock()
 
 
-def _get_genai_client() -> genai.Client:
-    global _client
-    if _client is not None:
-        return _client
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(503, "judgment service is not configured")
+def _split_env_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _gemini_models() -> list[str]:
+    """Return model fallback order without duplicates."""
+    models = _split_env_list(os.environ.get("GEMINI_MODELS"))
+    if not models:
+        models = [os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)]
+    result: list[str] = []
+    for model in models:
+        if model and model not in result:
+            result.append(model)
+    return result
+
+
+def _gemini_api_keys() -> list[tuple[str, str]]:
+    """Return API keys in cost-priority order: free/default first, paid last."""
+    keys: list[tuple[str, str]] = []
+    primary = os.environ.get("GEMINI_API_KEY")
+    if primary:
+        keys.append(("primary", primary))
+    for index, api_key in enumerate(_split_env_list(os.environ.get("GEMINI_API_KEYS")), start=1):
+        if api_key not in [value for _, value in keys]:
+            keys.append((f"extra_{index}", api_key))
+    paid = os.environ.get("GEMINI_PAID_API_KEY")
+    if paid and paid not in [value for _, value in keys]:
+        keys.append(("paid", paid))
+    return keys
+
+
+def _get_genai_client(api_key: str | None = None) -> genai.Client:
+    if api_key is None:
+        keys = _gemini_api_keys()
+        if not keys:
+            raise HTTPException(503, "judgment service is not configured")
+        api_key = keys[0][1]
     with _client_lock:
-        if _client is None:
-            _client = genai.Client(api_key=api_key)
-    return _client
+        client = _clients.get(api_key)
+        if client is None:
+            client = genai.Client(api_key=api_key)
+            _clients[api_key] = client
+    return client
+
+
+def _generate_vision_result(image: bytes, prompt: str, symbol_id: str) -> VisionResult:
+    api_keys = _gemini_api_keys()
+    models = _gemini_models()
+    if not api_keys:
+        raise HTTPException(503, "judgment service is not configured")
+    if not models:
+        raise HTTPException(503, "judgment model is not configured")
+
+    last_error: Exception | None = None
+    for key_label, api_key in api_keys:
+        for model in models:
+            try:
+                response = _get_genai_client(api_key).models.generate_content(
+                    model=model,
+                    contents=[types.Part.from_bytes(data=image, mime_type="image/png"), prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=VisionResult,
+                        temperature=0.0,
+                    ),
+                )
+                return VisionResult.model_validate_json(response.text or "")
+            except ValidationError as exc:
+                last_error = exc
+                logger.warning(
+                    "invalid Gemini response; trying next Gemini candidate",
+                    extra={"symbol_id": symbol_id, "model": model, "key_label": key_label},
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Gemini candidate failed; trying next Gemini candidate",
+                    extra={"symbol_id": symbol_id, "model": model, "key_label": key_label},
+                )
+
+    logger.exception("all Gemini candidates failed", extra={"symbol_id": symbol_id}, exc_info=last_error)
+    raise HTTPException(503, "judgment service unavailable") from last_error
 
 
 def _decode_png(image_b64: str) -> bytes:
@@ -387,27 +461,7 @@ def judge(req: JudgeRequest, request: Request) -> dict[str, Any]:
 
 observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
 
-    try:
-        response = _get_genai_client().models.generate_content(
-            model=MODEL,
-            contents=[types.Part.from_bytes(data=image, mime_type="image/png"), prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=VisionResult,
-                temperature=0.0,
-            ),
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Gemini request failed", extra={"symbol_id": req.symbol_id})
-        raise HTTPException(503, "judgment service unavailable") from exc
-
-    try:
-        result = VisionResult.model_validate_json(response.text or "")
-    except ValidationError as exc:
-        logger.warning("invalid Gemini response", extra={"symbol_id": req.symbol_id})
-        raise HTTPException(502, "invalid vision response") from exc
+    result = _generate_vision_result(image, prompt, req.symbol_id)
 
     checks: list[dict[str, Any]] = []
     for index, feature in enumerate(required_features):
@@ -481,6 +535,6 @@ def healthz() -> dict[str, bool]:
 def readyz() -> dict[str, Any]:
     if not SYMBOLS:
         raise HTTPException(503, "no symbols loaded")
-    if not os.environ.get("GEMINI_API_KEY"):
+    if not _gemini_api_keys():
         raise HTTPException(503, "Gemini is not configured")
     return {"ok": True, "symbols": len(SYMBOLS), "feedback_enabled": bool(FEEDBACK_BUCKET)}
