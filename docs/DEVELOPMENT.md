@@ -217,6 +217,28 @@ GitHub の **Actions → Deploy Cloud Run → Run workflow** を実行
 - `gemini_model`: デプロイ先で使用するモデル（既定: `gemini-2.5-flash`）
 - `max_instances`: Cloud Run の最大インスタンス数（既定: 1）
 
+### カスタムドメイン設定
+
+Cloud Run サービスはデフォルトで `https://zukigou-drill-XXXXXX.a.run.app` という自動生成 URL を取得する。カスタムドメイン `zukigou-drill-dojo.run.app` にマッピングするには：
+
+#### Cloud Console での設定
+
+1. [Cloud Console](https://console.cloud.google.com/run) を開く
+2. `zukigou-drill` サービスを選択
+3. **ドメインマッピング** タブ → **ドメインを追加**
+4. ドメイン `zukigou-drill-dojo.run.app` を入力
+5. DNS レコードを確認・設定（Cloud DNS または外部 DNS プロバイダー）
+
+#### CLI での設定
+
+```bash
+gcloud beta run domain-mappings create \
+  --service=zukigou-drill \
+  --domain=zukigou-drill-dojo.run.app \
+  --project=zukigou-drill-dojo \
+  --region=asia-northeast1
+```
+
 ---
 
 ## 記号の追加
