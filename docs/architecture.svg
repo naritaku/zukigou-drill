@@ -1,0 +1,91 @@
+<svg viewBox="0 0 1000 800" xmlns="http://www.w3.org/2000/svg">
+  <!-- Define styles -->
+  <defs>
+    <style>
+      .box { fill: #e3f2fd; stroke: #1976d2; stroke-width: 2; }
+      .label { font-family: "Segoe UI", sans-serif; font-size: 14px; fill: #000; text-anchor: middle; }
+      .title { font-family: "Segoe UI", sans-serif; font-size: 16px; font-weight: bold; fill: #000; text-anchor: middle; }
+      .arrow { stroke: #1976d2; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .note { font-family: "Segoe UI", sans-serif; font-size: 12px; fill: #666; text-anchor: start; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#1976d2" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="500" y="30" class="title">配線用図記号ドリル - システムアーキテクチャ</text>
+
+  <!-- Layer 1: Browser -->
+  <rect x="50" y="80" width="200" height="80" class="box" />
+  <text x="150" y="110" class="label">ブラウザ</text>
+  <text x="150" y="130" class="label" font-size="12">HTML5 Canvas</text>
+  <text x="150" y="150" class="label" font-size="12">指描き入力</text>
+
+  <!-- Image Processing -->
+  <path d="M 150 160 L 150 200" class="arrow" />
+  <rect x="50" y="200" width="200" height="80" class="box" />
+  <text x="150" y="230" class="label">画像処理</text>
+  <text x="150" y="250" class="label" font-size="12">白背景化・トリミング</text>
+  <text x="150" y="270" class="label" font-size="12">正規化 512px</text>
+
+  <!-- Cloud Run -->
+  <path d="M 150 280 L 150 320" class="arrow" />
+  <rect x="30" y="320" width="240" height="200" class="box" />
+  <text x="150" y="345" class="title" font-size="14">Cloud Run (FastAPI)</text>
+
+  <!-- Rate Limiting -->
+  <rect x="50" y="360" width="180" height="50" fill="#fff3e0" stroke="#f57c00" stroke-width="1" />
+  <text x="140" y="380" class="label" font-size="12">Rate Limiting</text>
+  <text x="140" y="395" class="label" font-size="11">(Firestore)</text>
+
+  <!-- Rubric Engine -->
+  <rect x="50" y="420" width="180" height="50" fill="#e8f5e9" stroke="#388e3c" stroke-width="1" />
+  <text x="140" y="440" class="label" font-size="12">ルーブリック判定</text>
+  <text x="140" y="455" class="label" font-size="11">symbols.json</text>
+
+  <!-- Gemini API -->
+  <path d="M 270 420 L 350 420" class="arrow" />
+  <rect x="350" y="380" width="200" height="80" class="box" />
+  <text x="450" y="410" class="label">Gemini Vision API</text>
+  <text x="450" y="430" class="label" font-size="12">特徴観察 (JSON Schema)</text>
+
+  <!-- JSON Schema Response -->
+  <path d="M 350 420 L 270 420" class="arrow" />
+
+  <!-- Response -->
+  <path d="M 150 520 L 150 560" class="arrow" />
+  <rect x="50" y="560" width="200" height="60" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1" />
+  <text x="150" y="580" class="label">採点結果</text>
+  <text x="150" y="600" class="label" font-size="11">{passed, score, checks}</text>
+
+  <!-- GCS Optional -->
+  <path d="M 250 440 L 320 440" class="arrow" />
+  <rect x="320" y="410" width="140" height="60" fill="#fce4ec" stroke="#c2185b" stroke-width="1" stroke-dasharray="5,5" />
+  <text x="390" y="435" class="label" font-size="12">GCS (Optional)</text>
+  <text x="390" y="450" class="label" font-size="11">Judgment Storage</text>
+
+  <!-- Firestore for State -->
+  <path d="M 30 370 L 10 370" class="arrow" stroke-dasharray="5,5" />
+  <rect x="0" y="350" width="30" height="40" fill="#ffebee" stroke="#d32f2f" stroke-width="1" />
+
+  <!-- Browser Response -->
+  <path d="M 150 560 L 150 620" class="arrow" />
+  <rect x="50" y="620" width="200" height="80" class="box" />
+  <text x="150" y="650" class="label">ブラウザ表示</text>
+  <text x="150" y="670" class="label" font-size="12">合否・スコア</text>
+  <text x="150" y="690" class="label" font-size="12">不足特徴・お手本</text>
+
+  <!-- Legend -->
+  <text x="50" y="750" class="note" font-weight="bold">● 必須コンポーネント</text>
+  <rect x="40" y="740" width="8" height="8" class="box" />
+
+  <text x="250" y="750" class="note" font-weight="bold">● オプション</text>
+  <line x1="240" y1="745" x2="248" y2="745" stroke="#c2185b" stroke-width="2" stroke-dasharray="2,2" />
+
+  <text x="450" y="750" class="note" font-weight="bold">● 外部API</text>
+  <rect x="440" y="740" width="8" height="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="1" />
+
+  <!-- Data flow note -->
+  <text x="50" y="780" class="note">データフロー: ユーザー入力 → 画像処理 → Cloud Run (採点) → 結果表示</text>
+</svg>
