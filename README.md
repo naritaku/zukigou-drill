@@ -51,7 +51,9 @@ Google AI Dojo Season 2 提出作品
 
 ### Web で試す
 
-デプロイ済みサービス: https://zukigou-drill-dojo.run.app
+デプロイ済みサービス: https://zukigou-drill-vnoxzmytga-an.a.run.app
+
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
 
 ### ローカルで実行
 

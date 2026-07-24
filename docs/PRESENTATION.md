@@ -330,5 +330,9 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 # リンク
 
+**デモサイト**: https://zukigou-drill-vnoxzmytga-an.a.run.app
+
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+
 - GitHub: https://github.com/naritaku/zukigou-drill
 - ドキュメント: [DEVELOPMENT.md](docs/DEVELOPMENT.md) / [ARCHITECTURE.md](docs/ARCHITECTURE.md) / [requirements.md](docs/requirements.md)
