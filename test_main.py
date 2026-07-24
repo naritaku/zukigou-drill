@@ -62,6 +62,7 @@ class JudgeEndpointTest(unittest.TestCase):
         self.client = TestClient(main.app)
         self.symbol = next(symbol for symbol in main.SYMBOLS.values() if symbol["verified"])
         main._hits.clear()
+        main._clients.clear()
 
     def test_judge_rejects_blank_image_without_creating_genai_client(self):
         with patch.object(main, "_get_genai_client") as get_client:
@@ -88,7 +89,8 @@ class JudgeEndpointTest(unittest.TestCase):
         fake_client = Mock()
         fake_client.models.generate_content.return_value.text = response_text
 
-        with patch.object(main, "_get_genai_client", return_value=fake_client):
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]), \
+            patch.object(main, "_get_genai_client", return_value=fake_client):
             res = self.client.post(
                 "/api/judge",
                 json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64()},
@@ -99,6 +101,42 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertTrue(body["passed"])
         self.assertEqual(body["score"], f"{len(body['checks'])}/{len(body['checks'])}")
         fake_client.models.generate_content.assert_called_once()
+
+    def test_judge_falls_back_models_before_paid_key(self):
+        required = self.symbol.get("required_features", self.symbol["features"])
+        response_text = json.dumps(
+            {
+                "required": [True for _ in required],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "fallback succeeded",
+            },
+            ensure_ascii=False,
+        )
+        free_client = Mock()
+        paid_client = Mock()
+        free_client.models.generate_content.side_effect = [RuntimeError("rate limit"), RuntimeError("rate limit")]
+        paid_client.models.generate_content.return_value.text = response_text
+
+        def get_client(api_key=None):
+            return {"free-key": free_client, "paid-key": paid_client}[api_key]
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
+            patch.object(main, "_gemini_models", return_value=["gemini-3.6-flash", "gemini-2.5-flash-lite"]), \
+            patch.object(main, "_get_genai_client", side_effect=get_client):
+            res = self.client.post(
+                "/api/judge",
+                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64()},
+            )
+
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(free_client.models.generate_content.call_count, 2)
+        paid_client.models.generate_content.assert_called_once()
+        attempted_models = [
+            call.kwargs["model"] for call in free_client.models.generate_content.call_args_list
+        ]
+        self.assertEqual(attempted_models, ["gemini-3.6-flash", "gemini-2.5-flash-lite"])
+        self.assertEqual(paid_client.models.generate_content.call_args.kwargs["model"], "gemini-3.6-flash")
 
     def test_report_rejects_tampered_checklist_before_saving_feedback(self):
         judgment = {

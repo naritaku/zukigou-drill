@@ -121,14 +121,18 @@ gcloud run services update zukigou-drill --set-env-vars FEEDBACK_BUCKET=zukigou-
 
 - APIはPNG形式・最大サイズ・最大ピクセル数・白紙に近い画像をサーバー側で検証し、無駄な外部API呼び出しを抑制します。
 - Geminiの応答はJSON SchemaとPydantic strict modeで検証します。
+- Gemini判定は `GEMINI_API_KEY` を最優先し、`GEMINI_MODELS` の順にモデルを切り替えながら試行します。無料枠キーや追加キーで失敗した場合だけ、最後に `GEMINI_PAID_API_KEY` を使います。
 - 判定画像は通常保存しません。`FEEDBACK_BUCKET` 設定時も、「判定に納得できない」の明示報告だけを匿名保存します。
 - 組み込みレート制限は単一インスタンス向けの補助機能です。一般公開では Cloud Armor、Cloud Run の `max-instances`、Gemini API quotaを併用してください。
 
 主な環境変数:
 
 ```text
-GEMINI_API_KEY          必須。Gemini APIキー
-GEMINI_MODEL            既定: gemini-2.5-flash
+GEMINI_API_KEY          必須。優先利用する無料枠などのGemini APIキー
+GEMINI_PAID_API_KEY     任意。無料枠/追加キーと全モデルの試行後に使う有料Gemini APIキー
+GEMINI_API_KEYS         任意。GEMINI_API_KEY と GEMINI_PAID_API_KEY の間に試す追加キー(カンマ区切り)
+GEMINI_MODEL            既定: gemini-2.5-flash。GEMINI_MODELS 未設定時の単一モデル指定
+GEMINI_MODELS           任意。優先順に試すGeminiモデル(カンマ区切り。例: gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite)
 FEEDBACK_BUCKET         任意。異議報告の保存先GCSバケット
 MAX_IMAGE_BYTES         既定: 1000000
 MAX_IMAGE_B64_CHARS     既定: 1500000
