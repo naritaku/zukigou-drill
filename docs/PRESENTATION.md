@@ -214,10 +214,11 @@ LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コー�
 </div>
 <div>
 
-### Firestore によるレート制限
+### キー枯渇時のバックオフ
 - キーごとに **指数バックオフ** を管理
   （75 秒 → 最大 24 時間）
-- Cloud Run 再起動後も状態を保持
+- 429 を返したキーを一定時間スキップし、
+  次のキーへ自動フォールバック
 
 ### 任意：学習データ保存（オプトイン）
 - 全判定ログ：30 日で自動削除
@@ -234,7 +235,7 @@ LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コー�
 |---|---|---|---|
 | **Cloud Run** | 200 万リクエスト/月 | 1,000 リクエスト | **$0** |
 | **Gemini API** | 無料ティア（1 日 100 回） | 約 33 回/日 | **$0** |
-| **Firestore** | 読み取り 5 万回/日 | 数十回/日 | **$0** |
+| **Cloud Storage** | 5 GB（任意・既定は無効） | 0〜数十 MB | **$0** |
 
 無料枠超過時も Gemini 3.1 Flash-Lite は入力 $0.25/100 万トークン → **1,000 判定 ≈ $1 未満**
 
@@ -249,9 +250,9 @@ LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コー�
 | **フロントエンド** | HTML5 Canvas + Vanilla JavaScript |
 | **バックエンド** | FastAPI + Python |
 | **AI** | Gemini API（Flash Lite / 画像認識） |
-| **インフラ** | Cloud Run + Cloud Storage + Firestore |
+| **インフラ** | Cloud Run + Cloud Storage（任意） |
 | **CI / CD** | GitHub Actions + Workload Identity Federation |
-| **監視** | Cloud Logging + Cloud Monitoring |
+| **監視** | Cloud Logging（Cloud Run 標準メトリクス） |
 
 ---
 
