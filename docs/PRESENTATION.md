@@ -133,7 +133,7 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
-# ソリューション：スマホだけで安く・早く・簡単に
+# スマホだけで安く・早く・簡単に
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2em; margin-top: 1.2em;">
 
@@ -228,14 +228,17 @@ LLM 単独では出力がぶれる。ルーブリック × AI 観察 × コー�
 
 ---
 
-# コスト試算：月 1000 判定での概算
+# コスト試算：月 1,000 判定での概算
 
-- **Cloud Run**: リクエスト課金 ≈ **$0.02/月**（scale to zero）
-- **Gemini API**: 無料枠 1 日 100 回（月 3000 回相当）→ **$0**
-- **Firestore**: 無料枠（読み取り 5 万回/日）内 → **$0**
-- **合計**: **実質 月 $1 未満**
+| サービス | 無料枠 | 本アプリの使用量 | 費用 |
+|---|---|---|---|
+| **Cloud Run** | 200 万リクエスト/月 | 1,000 リクエスト | **$0** |
+| **Gemini API** | 無料ティア（1 日 100 回） | 約 33 回/日 | **$0** |
+| **Firestore** | 読み取り 5 万回/日 | 数十回/日 | **$0** |
 
-→ 無料枠を超えても有料キーへ自動フォールバック。スケールしても限界費用は数ドル。
+無料枠超過時も Gemini 3.1 Flash-Lite は入力 $0.25/100 万トークン → **1,000 判定 ≈ $1 未満**
+
+出典: [Cloud 料金計算ツール](https://cloud.google.com/products/calculator) / [Gemini API 料金](https://ai.google.dev/gemini-api/docs/pricing) / [Cloud Run 料金](https://cloud.google.com/run/pricing)
 
 ---
 
