@@ -85,19 +85,21 @@ style: |
 
 **ログイン不要・成績保存なし・URL 共有だけで利用可能**
 
-Google AI Dojo Season 2 提出作品
+[Google AI Dojo Season 2](https://developers-jp.googleblog.com/2026/06/google-ai-dojo-ai.html) 提出作品
+
+powered by [@naritaku](https://github.com/naritaku/)
 
 ---
 
 # 課題
 
-従来の設備系統図学習は採点に人手が必要で、フィードバックが遅い。
+設備系統図の学習は **物量が多いが、単調でつまらない**。
 
-- 記号の完全性判定は専門知識を要する
-- 実時間の指摘がなく、練習の反復が遅くなる
-- 「どの特徴が不足しているか」が不透明
+- 参考書で 100+ 記号を覚える → フィードバックなし → モチベーション低下
+- 描いてみても「これで合ってる？」分からない → 試行錯誤の無限ループ
+- 試験直前に採点者を探す手間 → 学習時間をロス
 
-→ 試験対策の学習効率が低い。
+→ **学習が苦行になり、挫折する学習者が多い。**
 
 ---
 
@@ -218,7 +220,7 @@ Google AI Dojo Season 2 提出作品
 
 - 電話設備 / インターホン / テレビ共聴 / LAN 情報 / 放送設備
 
-各記号は JIS C 0303:2000 規格票で検証済み（現在 26 個、100+ への拡張予定）
+各記号は JIS C 0303:2000 規格票で検証済み（現在 26 個、学習がてら随時拡張予定）
 
 ---
 
@@ -294,12 +296,8 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 ## GitHub Actions オートメーション
 
 - **自動デプロイ** — Cloud Run へ本番デプロイ
-- **自動レビュー** — PR 提出時に敵対的レビュー実行
 - **スケーリング管理** — max_instances パラメータ化
 - **Secret 管理** — Workload Identity Federation で安全化
-
----
-
 
 ---
 
@@ -349,7 +347,7 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 <div style="margin: 24px auto; padding: 32px; background: #eef2fa; border-radius: 4px; display: flex; justify-content: center; align-items: center;">
 
-![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=2&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=25&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
 
 </div>
 
