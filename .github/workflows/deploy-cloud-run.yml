@@ -3,14 +3,26 @@ name: Deploy Cloud Run
 on:
   workflow_dispatch:
     inputs:
-      gemini_model:
-        description: Gemini model name for runtime GEMINI_MODEL
-        required: true
-        default: gemini-3.6-flash
+      gemini_models_free:
+        description: Free-tier Gemini models (comma-separated)
+        required: false
+        default: gemini-3.1-flash-lite,gemini-3.5-flash
+      gemini_models_paid:
+        description: Paid-tier Gemini models (comma-separated)
+        required: false
+        default: gemini-3.1-flash-lite,gemini-3.5-flash
       max_instances:
         description: Cloud Run max instances
         required: true
         default: "2"
+      rate_limit:
+        description: Request rate limit per window
+        required: false
+        default: "20"
+      rate_window:
+        description: Rate limit window in seconds
+        required: false
+        default: "60"
 
 permissions:
   contents: read
@@ -20,7 +32,6 @@ env:
   PROJECT_ID: zukigou-drill-dojo
   REGION: asia-northeast1
   SERVICE_NAME: zukigou-drill
-  SECRET_NAME: GEMINI_API_KEY
 
 jobs:
   deploy:
@@ -48,8 +59,13 @@ jobs:
             --region "$REGION" \
             --allow-unauthenticated \
             --max-instances "${{ inputs.max_instances }}" \
-            --set-secrets "GEMINI_API_KEY=${SECRET_NAME}:latest" \
-            --set-env-vars "GEMINI_MODEL=${{ inputs.gemini_model }}"
+            --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+            --set-secrets "GEMINI_API_KEYS=GEMINI_API_KEYS:latest" \
+            --set-secrets "GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest" \
+            --set-env-vars "GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}" \
+            --set-env-vars "GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}" \
+            --set-env-vars "RATE_LIMIT=${{ inputs.rate_limit }}" \
+            --set-env-vars "RATE_WINDOW=${{ inputs.rate_window }}"
 
       - name: Verify health endpoints
         run: |
@@ -57,5 +73,6 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --format='value(status.url)')"
-          curl -fsS "$SERVICE_URL/healthz"
-          curl -fsS "$SERVICE_URL/readyz"
+          echo "Service deployed at: $SERVICE_URL"
+          curl -fsS "$SERVICE_URL/healthz" && echo "✓ /healthz OK"
+          curl -fsS "$SERVICE_URL/readyz" && echo "✓ /readyz OK"
