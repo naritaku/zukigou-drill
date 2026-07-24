@@ -55,7 +55,7 @@ Google AI Dojo Season 2 提出作品
 
 <div style="margin: 16px 0; padding: 24px; background: #f3f4f6; border-radius: 4px; display: inline-block;">
 
-![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=2&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=25&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
 
 </div>
 

@@ -153,7 +153,7 @@ powered by [@naritaku](https://github.com/naritaku/)
 
 <div style="display: inline-block; padding: 24px; background: #ffffff; border-radius: 4px;">
 
-![w:250](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=2&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+![w:250](https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=25&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
 
 </div>
 
