@@ -196,5 +196,129 @@ class GCSTest(unittest.TestCase):
             main.ALL_JUDGMENTS_BUCKET = original_bucket
 
 
+class SplitEnvListTest(unittest.TestCase):
+    """_split_env_list 関数の包括的なテスト"""
+
+    def test_split_env_list_with_none_returns_empty_list(self):
+        """None を渡すと空リストを返す"""
+        result = main._split_env_list(None)
+        self.assertEqual(result, [])
+
+    def test_split_env_list_with_empty_string_returns_empty_list(self):
+        """空文字列を渡すと空リストを返す"""
+        result = main._split_env_list("")
+        self.assertEqual(result, [])
+
+    def test_split_env_list_with_single_value(self):
+        """単一の値を渡すと1要素のリストを返す"""
+        result = main._split_env_list("single-key")
+        self.assertEqual(result, ["single-key"])
+
+    def test_split_env_list_with_multiple_values(self):
+        """カンマ区切りの複数値を渡すとリストに分割"""
+        result = main._split_env_list("key1,key2,key3")
+        self.assertEqual(result, ["key1", "key2", "key3"])
+
+    def test_split_env_list_strips_whitespace(self):
+        """カンマの前後の空白を削除"""
+        result = main._split_env_list("key1 , key2 , key3")
+        self.assertEqual(result, ["key1", "key2", "key3"])
+
+    def test_split_env_list_filters_empty_elements(self):
+        """カンマ区切りで空要素が含まれる場合はフィルタリング"""
+        result = main._split_env_list("key1,,key2")
+        self.assertEqual(result, ["key1", "key2"])
+
+    def test_split_env_list_with_only_whitespace_elements(self):
+        """空白のみの要素をフィルタリング"""
+        result = main._split_env_list("key1,  ,key2")
+        self.assertEqual(result, ["key1", "key2"])
+
+    def test_split_env_list_with_trailing_comma(self):
+        """末尾のカンマは無視される"""
+        result = main._split_env_list("key1,key2,")
+        self.assertEqual(result, ["key1", "key2"])
+
+    def test_split_env_list_with_leading_comma(self):
+        """先頭のカンマは無視される"""
+        result = main._split_env_list(",key1,key2")
+        self.assertEqual(result, ["key1", "key2"])
+
+    def test_split_env_list_with_multiple_consecutive_commas(self):
+        """連続したカンマはフィルタリング"""
+        result = main._split_env_list("key1,,,key2")
+        self.assertEqual(result, ["key1", "key2"])
+
+
+class ImageProcessingTest(unittest.TestCase):
+    """画像処理関数のテスト"""
+
+    def test_flatten_image_rgb_unchanged(self):
+        """RGB 画像は変換されない"""
+        img = Image.new("RGB", (64, 64), "white")
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((10, 10, 50, 50), fill="black")
+
+        result = main._flatten_image(img)
+
+        self.assertEqual(result.mode, "RGB")
+        self.assertEqual(result.size, (64, 64))
+
+    def test_flatten_image_rgba_to_rgb(self):
+        """RGBA 画像は RGB に変換される"""
+        img = Image.new("RGBA", (64, 64), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((10, 10, 50, 50), fill=(0, 0, 0, 255))
+
+        result = main._flatten_image(img)
+
+        self.assertEqual(result.mode, "RGB")
+        self.assertEqual(result.size, (64, 64))
+
+    def test_count_ink_pixels_blank_image(self):
+        """白紙画像はインク量が少ない"""
+        img = Image.new("RGB", (64, 64), "white")
+
+        count = main._count_ink_pixels(img)
+
+        self.assertEqual(count, 0)
+
+    def test_count_ink_pixels_with_black_region(self):
+        """黒い領域を含む画像はインク量が増える"""
+        img = Image.new("RGB", (64, 64), "white")
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((10, 10, 50, 50), fill="black")
+
+        count = main._count_ink_pixels(img)
+
+        # 40x40 の黒い領域がある（1600 ピクセル）
+        self.assertGreater(count, 1000)
+
+
+class EnvironmentConfigTest(unittest.TestCase):
+    """環境設定関連のテスト"""
+
+    def test_gemini_models_with_none_returns_default(self):
+        """key_label が None のときデフォルトモデルを返す"""
+        models = main._gemini_models(None)
+
+        self.assertIsInstance(models, list)
+        self.assertGreater(len(models), 0)
+
+    def test_gemini_models_free_tier(self):
+        """free キーで無料モデルリストを返す"""
+        models = main._gemini_models("free")
+
+        self.assertIsInstance(models, list)
+        self.assertGreater(len(models), 0)
+
+    def test_gemini_models_paid_tier(self):
+        """paid キーで有料モデルリストを返す"""
+        models = main._gemini_models("paid")
+
+        self.assertIsInstance(models, list)
+        self.assertGreater(len(models), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
