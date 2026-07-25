@@ -1245,5 +1245,139 @@ class ReportEndpointTest(unittest.TestCase):
         self.assertIn("application/json", res.headers["content-type"])
 
 
+class LoadSymbolsValidationTest(unittest.TestCase):
+    """_load_symbols のデータ整合性検証（不正な symbols.json を起動時に弾く）"""
+
+    def _run_with(self, payload):
+        import json as _json
+        import pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "symbols.json").write_text(_json.dumps(payload), encoding="utf-8")
+            with patch.object(main, "ROOT", pathlib.Path(d)):
+                return main._load_symbols()
+
+    def _ok_symbol(self, **over):
+        base = {
+            "id": "s1",
+            "name": "記号1",
+            "category": "電話設備",
+            "required_features": ["縦線が1本ある"],
+            "verified": True,
+        }
+        base.update(over)
+        return base
+
+    def test_accepts_valid_payload(self):
+        result = self._run_with({"symbols": [self._ok_symbol()]})
+        self.assertIn("s1", result)
+
+    def test_rejects_non_list_symbols(self):
+        with self.assertRaises(RuntimeError):
+            self._run_with({"symbols": "notalist"})
+
+    def test_rejects_duplicate_id(self):
+        with self.assertRaises(RuntimeError):
+            self._run_with({"symbols": [self._ok_symbol(), self._ok_symbol()]})
+
+    def test_rejects_empty_required_features(self):
+        with self.assertRaises(RuntimeError):
+            self._run_with({"symbols": [self._ok_symbol(required_features=[])]})
+
+    def test_rejects_when_no_verified_symbol(self):
+        with self.assertRaises(RuntimeError):
+            self._run_with({"symbols": [self._ok_symbol(verified=False)]})
+
+    def test_rejects_invalid_forbidden_features(self):
+        with self.assertRaises(RuntimeError):
+            self._run_with({"symbols": [self._ok_symbol(forbidden_features=[""])]})
+
+
+class FirestoreResilienceTest(unittest.TestCase):
+    """Firestore 読み取りが失敗しても None を返し、判定を継続できる"""
+
+    def setUp(self):
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def tearDown(self):
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def test_read_error_returns_none(self):
+        db = Mock()
+        db.collection.return_value.document.return_value.get.side_effect = RuntimeError("firestore down")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            # メモリ・キャッシュに無いキーなので Firestore を引きにいき、例外 → None
+            self.assertIsNone(main._get_rate_limit_status("unknown-key"))
+
+    def test_read_error_is_not_cached(self):
+        db = Mock()
+        db.collection.return_value.document.return_value.get.side_effect = RuntimeError("firestore down")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._get_rate_limit_status("unknown-key")
+        # 障害時はキャッシュしない（次回再試行できる）
+        self.assertNotIn("unknown-key", main._fs_status_cache)
+
+
+class SaveToGcsUploadTest(unittest.TestCase):
+    """_save_to_gcs が画像とJSONを正しいパス/Content-Typeで書き込む"""
+
+    def setUp(self):
+        self._orig = main._storage_client
+
+    def tearDown(self):
+        main._storage_client = self._orig
+
+    def test_uploads_png_and_json_with_correct_paths(self):
+        blobs = {}
+
+        class FakeBlob:
+            def __init__(self, name):
+                self.name = name
+            def upload_from_string(self, data, content_type=None):
+                blobs[self.name] = (data, content_type)
+
+        class FakeBucket:
+            def blob(self, name):
+                return FakeBlob(name)
+
+        class FakeStorage:
+            def __init__(self):
+                self.requested = None
+            def bucket(self, name):
+                self.requested = name
+                return FakeBucket()
+
+        fake = FakeStorage()
+        main._storage_client = fake
+        main._save_to_gcs("zukigou-all", "sym1", b"\x89PNG-bytes",
+                          {"passed": True, "score": "3/3"}, prefix="judgments")
+
+        self.assertEqual(fake.requested, "zukigou-all")
+        names = sorted(blobs.keys())
+        self.assertEqual(len(names), 2)
+        png = [n for n in names if n.endswith(".png")][0]
+        js = [n for n in names if n.endswith(".json")][0]
+        # パス書式: prefix/symbol_id/YYYY-MM-DD/<hex>.{png,json}
+        self.assertTrue(png.startswith("judgments/sym1/"))
+        self.assertEqual(blobs[png], (b"\x89PNG-bytes", "image/png"))
+        self.assertEqual(blobs[js][1], "application/json")
+        self.assertIn('"passed"', blobs[js][0])
+
+    def test_upload_failure_is_swallowed(self):
+        class BoomStorage:
+            def bucket(self, name):
+                raise RuntimeError("gcs down")
+
+        main._storage_client = BoomStorage()
+        # 例外は判定処理に波及させない（Noneを返して静かに失敗）
+        try:
+            main._save_to_gcs("b", "sym1", b"x", {"a": 1}, prefix="judgments")
+        except Exception:
+            self.fail("_save_to_gcs must not raise")
+
+
 if __name__ == "__main__":
     unittest.main()
