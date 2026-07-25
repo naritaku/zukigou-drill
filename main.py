@@ -95,6 +95,11 @@ _storage_lock = threading.Lock()
 _firestore_lock = threading.Lock()
 _rate_limited_keys: dict[str, tuple[float, int]] = {}  # APIキー → (レート制限時刻, 連続失敗回数)
 _rate_limit_lock = threading.Lock()
+# メモリに記録の無いキーの Firestore 参照を短時間キャッシュし、判定/ヘルスチェック毎の
+# read を「キー数 ÷ TTL」に抑える。値は (取得時刻, 生データ or None)。生データは
+# (limited_at, consecutive_count, backoff_seconds) で、残り時間は都度再計算する。
+_fs_status_cache: dict[str, tuple[float, tuple[float, int, int] | None]] = {}
+_FS_CACHE_TTL = int(os.environ.get("RATE_LIMIT_FS_CACHE_TTL", "30"))
 
 # 段階的な指数バックオフ（秒単位）
 # インデックス = 連続失敗回数 - 1（0-indexed）
@@ -214,50 +219,50 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
       RateLimitStatus: 制限中の詳細情報
     """
     now = time.time()
+
+    def _active(limited_at: float, consecutive_count: int, backoff_seconds: int) -> RateLimitStatus | None:
+        # 満了していれば None。エントリ/ドキュメントは消さず残し、引き継ぎに使う。
+        elapsed = now - limited_at
+        if elapsed >= backoff_seconds:
+            return None
+        return {
+            "remaining": backoff_seconds - elapsed,
+            "consecutive_count": consecutive_count,
+            "backoff_seconds": backoff_seconds,
+        }
+
     with _rate_limit_lock:
-        # Firestore から状態を読み込み
+        # 1) メモリを最優先（このインスタンスが一度でも記録したキーは Firestore を読まない）
+        if api_key in _rate_limited_keys:
+            limited_at, consecutive_count = _rate_limited_keys[api_key]
+            backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
+            return _active(limited_at, consecutive_count, _BACKOFF_SECONDS[backoff_index])
+
+        # 2) メモリ未記録: Firestore を参照（キー単位の短命 TTL キャッシュで read を削減）
+        cached = _fs_status_cache.get(api_key)
+        if cached is not None and now - cached[0] < _FS_CACHE_TTL:
+            raw = cached[1]
+            return None if raw is None else _active(*raw)
+
+        raw: tuple[float, int, int] | None = None
         db = _get_firestore_client()
         if db:
             try:
                 doc = db.collection("rate_limits").document(_rate_limit_doc_id(api_key)).get()
                 if doc.exists:
                     data = doc.to_dict()
-                    limited_at = data.get("timestamp", now)
-                    consecutive_count = data.get("consecutive_count", 0)
-                    backoff_seconds = data.get("backoff_seconds", 0)
-                    elapsed = now - limited_at
-
-                    if elapsed < backoff_seconds:
-                        return {
-                            "remaining": backoff_seconds - elapsed,
-                            "consecutive_count": consecutive_count,
-                            "backoff_seconds": backoff_seconds,
-                        }
-                    # バックオフ満了 → 「現在は制限なし」を返すが、ドキュメントは削除しない。
-                    # 直後に再び 429 が来たとき _mark_rate_limited が段階を引き継げるようにする。
-                    # 古くなった記録の掃除は Firestore TTL ポリシー（timestamp ベース）に委ねる。
-                    return None
+                    raw = (
+                        data.get("timestamp", now),
+                        data.get("consecutive_count", 0),
+                        data.get("backoff_seconds", 0),
+                    )
             except Exception as e:
                 logger.debug(f"Failed to read rate limit from Firestore: {e}")
+                # 障害時はキャッシュせず、次回再試行する
+                return None
 
-        # フォールバック：メモリから読み込み
-        if api_key not in _rate_limited_keys:
-            return None
-
-        limited_at, consecutive_count = _rate_limited_keys[api_key]
-        backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
-        backoff_seconds = _BACKOFF_SECONDS[backoff_index]
-        elapsed = now - limited_at
-
-        if elapsed >= backoff_seconds:
-            # 満了。エントリは消さず残し、引き継ぎに使う。陳腐化は _mark_rate_limited 側で判定。
-            return None
-
-        return {
-            "remaining": backoff_seconds - elapsed,
-            "consecutive_count": consecutive_count,
-            "backoff_seconds": backoff_seconds,
-        }
+        _fs_status_cache[api_key] = (now, raw)
+        return None if raw is None else _active(*raw)
 
 
 def _mark_rate_limited(api_key: str) -> None:
@@ -294,6 +299,7 @@ def _mark_rate_limited(api_key: str) -> None:
         consecutive_count = min(previous_count + 1, len(_BACKOFF_SECONDS))
 
         _rate_limited_keys[api_key] = (now, consecutive_count)
+        _fs_status_cache.pop(api_key, None)  # 古い「制限なし」キャッシュを無効化
 
         # Firestore に保存（永続化）
         if db:

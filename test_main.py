@@ -170,6 +170,7 @@ class JudgeEndpointTest(unittest.TestCase):
 class RateLimitingTest(unittest.TestCase):
     def setUp(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
         status = main._get_rate_limit_status("test-key")
@@ -195,9 +196,11 @@ class FirestoreRateLimitTest(unittest.TestCase):
 
     def setUp(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def tearDown(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def _make_db(self, doc):
         db = Mock()
@@ -327,6 +330,7 @@ class FirestoreRateLimitTest(unittest.TestCase):
 
             # 再起動を再現: メモリを消し、Firestore は残す
             main._rate_limited_keys.clear()
+            main._fs_status_cache.clear()
             # バックオフ満了させる
             store[doc_id]["timestamp"] -= main._BACKOFF_SECONDS[0] + 1
 
@@ -701,6 +705,7 @@ class GenerateVisionResultTest(unittest.TestCase):
 
     def setUp(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
         main._clients.clear()
 
     def test_generate_vision_result_no_api_keys_raises_503(self):
@@ -1072,9 +1077,11 @@ class ReadyzTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(main.app)
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def tearDown(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def test_readyz_ok_when_key_available(self):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]):
