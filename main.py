@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime
+import hashlib
 import io
 import json
 import logging
@@ -156,6 +157,11 @@ def _gemini_api_keys() -> list[tuple[str, str]]:
     return keys
 
 
+def _rate_limit_doc_id(api_key: str) -> str:
+    """生の API キーを Firestore のドキュメント ID やログに出さないためのハッシュ。"""
+    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+
 def _get_firestore_client() -> firestore.Client | None:
     """Firestore クライアントを取得（シングルトン）。"""
     global _firestore_client
@@ -195,7 +201,7 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
         db = _get_firestore_client()
         if db:
             try:
-                doc = db.collection("rate_limits").document(api_key).get()
+                doc = db.collection("rate_limits").document(_rate_limit_doc_id(api_key)).get()
                 if doc.exists:
                     data = doc.to_dict()
                     limited_at = data.get("timestamp", now)
@@ -239,28 +245,36 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
 def _mark_rate_limited(api_key: str) -> None:
     """429エラーを記録し、バックオフカウントをインクリメント。Firestore に永続化。"""
     now = time.time()
+    doc_id = _rate_limit_doc_id(api_key)
     with _rate_limit_lock:
+        db = _get_firestore_client()
+        previous_count = 0
         if api_key in _rate_limited_keys:
-            _, consecutive_count = _rate_limited_keys[api_key]
-            consecutive_count = min(consecutive_count + 1, len(_BACKOFF_SECONDS))
-        else:
-            consecutive_count = 1
+            _, previous_count = _rate_limited_keys[api_key]
+        elif db:
+            # 再起動直後はメモリが空。Firestore からバックオフ段階を引き継ぐ。
+            try:
+                doc = db.collection("rate_limits").document(doc_id).get()
+                if doc.exists:
+                    previous_count = doc.to_dict().get("consecutive_count", 0)
+            except Exception as e:
+                logger.debug(f"Failed to read rate limit from Firestore: {e}")
+        consecutive_count = min(previous_count + 1, len(_BACKOFF_SECONDS))
 
         _rate_limited_keys[api_key] = (now, consecutive_count)
 
         # Firestore に保存（永続化）
-        db = _get_firestore_client()
         if db:
             try:
                 backoff_index = min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)
                 backoff_seconds = _BACKOFF_SECONDS[backoff_index]
-                db.collection("rate_limits").document(api_key).set({
+                db.collection("rate_limits").document(doc_id).set({
                     "timestamp": now,
                     "consecutive_count": consecutive_count,
                     "backoff_seconds": backoff_seconds,
                 })
                 logger.info(
-                    f"Rate limited: {api_key}",
+                    f"Rate limited: key {doc_id}",
                     extra={
                         "consecutive_count": consecutive_count,
                         "backoff_minutes": backoff_seconds / 60,
