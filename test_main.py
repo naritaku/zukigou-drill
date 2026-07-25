@@ -149,6 +149,41 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertEqual(body["score"], f"{len(body['checks'])}/{len(body['checks'])}")
         fake_client.models.generate_content.assert_called_once()
 
+    def test_judge_failed_when_required_feature_missing(self):
+        """必須特徴が欠けていれば passed=false・mistakes に不足理由が入る（不合格フィードバックの核心）"""
+        required = self.symbol.get("required_features", self.symbol["features"])
+        forbidden = self.symbol.get("forbidden_features", [])
+        confusions = self.symbol.get("confusable_symbols", [])
+        # 先頭の必須特徴だけ False（欠落）にする
+        required_flags = [i != 0 for i in range(len(required))]
+        response_text = json.dumps(
+            {
+                "required": required_flags,
+                "forbidden": [False for _ in forbidden],
+                "confusions": [False for _ in confusions],
+                "observation": "一部の特徴が見当たらない",
+            },
+            ensure_ascii=False,
+        )
+        fake_client = Mock()
+        fake_client.models.generate_content.return_value.text = response_text
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]), \
+            patch.object(main, "_get_genai_client", return_value=fake_client):
+            res = self.client.post(
+                "/api/judge",
+                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64()},
+            )
+
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertFalse(body["passed"])
+        # 不足した必須特徴が mistakes に「必須特徴が不足: ...」として現れる
+        self.assertTrue(any(m.startswith("必須特徴が不足:") for m in body["mistakes"]))
+        # score は 合格数 < 総数
+        n_ok, n_total = map(int, body["score"].split("/"))
+        self.assertLess(n_ok, n_total)
+
     def test_judge_falls_back_models_before_paid_key(self):
         required = self.symbol.get("required_features", self.symbol["features"])
         response_text = json.dumps(
