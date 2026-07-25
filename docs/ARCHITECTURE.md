@@ -58,11 +58,9 @@ Cloud Run の scale to zero がそのまま成立する。
 **応答**:
 ```json
 {
-  "symbol_id": "tel-handset",
+  "id": "tel-handset",
   "name": "加入電話機",
-  "features": "二重円にフック付き...",
-  "category": "電話設備",
-  "similar": [...]
+  "category": "電話設備"
 }
 ```
 
@@ -73,27 +71,31 @@ Cloud Run の scale to zero がそのまま成立する。
 **リクエスト**:
 ```json
 {
-  "image": "base64-encoded-png",
-  "symbol_id": "tel-handset"
+  "symbol_id": "tel-handset",
+  "image_b64": "data:image/png;base64,iVBOR..."
 }
 ```
 
 **レスポンス（200 OK）**:
 ```json
 {
-  "passed": true,
-  "score": 0.95,
   "symbol_id": "tel-handset",
-  "checks": {
-    "double_circle": true,
-    "hook_shape": true,
-    "no_fill": true,
-    "similar_single_circle": false
-  },
+  "passed": true,
+  "score": "3/3",
+  "checks": [
+    { "feature": "必須: 二重円がある", "ok": true },
+    { "feature": "除外: 単一円がない", "ok": true },
+    { "feature": "識別: 加入電話機の決定的特徴ではない", "ok": true }
+  ],
   "mistakes": [],
-  "observation": "二重円が見られる。内側にフック形状あり。白背景で透明。"
+  "observation": "二重円が見られる。内側にフック形状あり。",
+  "ref_svg": "<svg>...</svg>"
 }
 ```
+
+- `score` は `"合格数/総数"` の文字列（例 `"3/3"`）
+- `checks` は `{feature, ok}` の配列
+- `ref_svg` は不合格時の比較表示用お手本
 
 **observation フィールド仕様**:
 - 型: `string`
