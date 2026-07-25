@@ -14,7 +14,7 @@ graph TD
     E --> F["📋 ルーブリック構築<br/>symbols.json（起動時キャッシュ）"]
     F --> G["🔑 キー選択<br/>バックオフ中のキーはスキップ<br/>無料 → 追加 → 有料"]
     G -->|"画像 + プロンプト"| H["🤖 Gemini Vision<br/>各特徴を true/false で観察<br/>JSON Schema 強制・temperature 0"]
-    H -->|"429 の場合"| I["⏱️ 指数バックオフ登録<br/>75s → 24h（メモリ上）"]
+    H -->|"429 の場合"| I["⏱️ 指数バックオフ登録<br/>75s → 24h（Firestore 永続）"]
     I -.->|"次のキーへ"| G
     H -->|"観察結果"| J["🎯 決定的採点<br/>合否・スコアはコードで算出"]
     J -->|"JSON レスポンス"| K["📊 ブラウザ表示<br/>合否・スコア・不足特徴・お手本"]
@@ -31,8 +31,8 @@ graph TD
     style L fill:#fce4ec,stroke:#c2185b,stroke-dasharray: 5 5
 ```
 
-**状態を持つのはレート制限だけ**で、それもインスタンス内メモリに閉じている
-（外部ストアへの永続化は未実装）。それ以外は完全にステートレスで、
+**状態を持つのはレート制限だけ**で、それも Firestore に永続化している
+（インスタンス内メモリはキャッシュ兼フォールバック）。それ以外は完全にステートレスで、
 Cloud Run の scale to zero がそのまま成立する。
 
 ---
@@ -228,7 +228,7 @@ def judge(image_b64, symbol_id):
         observation = gemini.vision(image, rubric, model, key)
         break
       except RateLimitError:          # code == 429
-        mark_rate_limited(key)        # メモリ上に記録し、このキーは打ち切り
+        mark_rate_limited(key)        # Firestore+メモリに記録し、このキーは打ち切り
         break
       except Exception:
         continue                      # 次のモデルへ
@@ -273,11 +273,14 @@ def judge(image_b64, symbol_id):
 ### バックオフ戦略
 
 API キーが 429（`code == 429` または `status == "RESOURCE_EXHAUSTED"`）を返すと、
-そのキーをプロセス内の辞書に記録する：
+そのキーの状態を Firestore とプロセス内メモリの両方に記録する：
 
 ```python
-_rate_limited_keys: dict[str, tuple[float, int]]
-#                        キー → (記録時刻, 連続失敗回数)
+# メモリ（キャッシュ／Firestore 不達時のフォールバック）
+_rate_limited_keys: dict[str, tuple[float, int]]   # キー → (記録時刻, 連続失敗回数)
+
+# Firestore（永続）: rate_limits/{key} ドキュメント
+# { timestamp, consecutive_count, backoff_seconds }
 ```
 
 連続失敗回数に応じて待機時間が延びる：
@@ -287,21 +290,23 @@ _rate_limited_keys: dict[str, tuple[float, int]]
 | 待機 | 75s | 10m | 1h | 3h | 5h | 10h | 24h |
 
 バックオフ中のキーは `/api/judge` の試行対象から外れ、次のキーへフォールバックする。
-待機時間を過ぎたキーは次回参照時に自動で解除される。
+待機時間を過ぎたキーは「制限なし」として扱われ再試行される。記録自体は残し、
+次に 429 になったとき段階を引き継げるようにする（最後の 429 から 24 時間超で
+経過していれば 1 から数え直す）。満了した記録の掃除は Firestore の TTL ポリシー
+（`timestamp` フィールド）に委ねる。
 
-#### 永続化していない
+#### Firestore で永続化する
 
-この状態は **各インスタンスのメモリ上にのみ存在する**。外部ストアには書いていない。
+状態を `rate_limits` コレクションに保存することで、インスタンスをまたいで一貫する。
 
 | 事象 | 挙動 |
 |---|---|
-| Cloud Run のコールドスタート | 状態がリセットされ、制限中のキーを一度再試行する |
-| スケールアウト | 新インスタンスは他インスタンスのバックオフを知らない |
-| インスタンス継続中 | 正しくバックオフが効く |
+| Cloud Run のコールドスタート | Firestore から状態を復元し、バックオフを継続 |
+| スケールアウト | 各インスタンスが同じ Firestore を参照し、制限を共有 |
+| Firestore に到達できない | メモリにフォールバック（判定は継続、共有性のみ低下） |
 
-複数インスタンス間で共有したい場合は Firestore や Redis 等の外部ストアが必要だが、
-現状の規模（scale to zero・低トラフィック）では過剰なため採用していない。
-再試行は 1 インスタンスあたり最大 1 回で、すぐ再びバックオフに入るため実害は小さい。
+Firestore 参照はレート制限判定のたびに 1 回で、低トラフィックのため無料枠に収まる。
+書き込みは 429 発生時のみ。
 
 ---
 
@@ -387,16 +392,18 @@ _rate_limited_keys: dict[str, tuple[float, int]]
 
 ### 同時実行性
 
-プロセス内で共有される可変状態は 2 つだけで、どちらも `threading.Lock` で保護している。
+プロセス内で共有される可変状態は 2 つで、どちらも `threading.Lock` で保護している。
 
 | 状態 | 用途 | スコープ |
 |---|---|---|
-| `_hits` | IP ごとのレート制限ウィンドウ | インスタンス内 |
-| `_rate_limited_keys` | API キーごとのバックオフ | インスタンス内 |
+| `_hits` | IP ごとのレート制限ウィンドウ | インスタンス内のみ |
+| `_rate_limited_keys` | API キーごとのバックオフ | メモリキャッシュ＋Firestore 永続 |
 
-いずれもインスタンス間で共有しないため、複数インスタンスでは各自が独立して
-制限を適用する。実効的な上限は「インスタンス数 × RATE_LIMIT」になる点に注意。
-厳密に絞りたい場合は Cloud Run の `max-instances` を併用する。
+`_rate_limited_keys` は Firestore に永続化されるため、再起動やスケールアウトを
+またいでバックオフが共有される。一方 `_hits`（IP レート制限）はインスタンス内のみで、
+複数インスタンスでは各自が独立して適用するため、実効的な IP 上限は
+「インスタンス数 × RATE_LIMIT」になる。厳密に絞りたい場合は Cloud Run の
+`max-instances` を併用する。
 
 ### コスト最適化
 
@@ -458,10 +465,15 @@ env:
 
 ```
 GET /healthz → 200 (プロセス生存)
-GET /readyz  → 200/503 (API キー設定・利用可能性)
+GET /readyz  → 200/503 (記号ロード・API キー設定・全キーのバックオフ状態)
 ```
 
-Cloud Run の自動再起動トリガー: `/readyz` が 503 を 3 回連続で返す
+Cloud Run（フルマネージド）は liveness/startup probe を明示設定しない限り
+これらを自動 probe しない。本サービスは probe を設定していないため、`/readyz` の 503 が
+インスタンスの自動再起動を引き起こすことはない（デプロイ後の手動ヘルス確認と、
+外形監視の判断材料として用いる）。probe を設定する場合は、全キーが一時的に
+レート制限された 503 で再起動ループに入らないよう、readiness probe には
+`/healthz` を割り当てること。
 
 ---
 
