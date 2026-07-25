@@ -11,6 +11,18 @@ from PIL import Image, ImageDraw
 
 import main
 
+# 全テストの既定では Firestore に接続しない（開発機の ADC で実 DB に触れるのを防ぐ）。
+# Firestore パスは FirestoreRateLimitTest がフェイククライアントで検証する。
+_firestore_patcher = patch.object(main, "_get_firestore_client", return_value=None)
+
+
+def setUpModule():
+    _firestore_patcher.start()
+
+
+def tearDownModule():
+    _firestore_patcher.stop()
+
 
 def png_b64(img: Image.Image) -> str:
     buf = io.BytesIO()
@@ -176,6 +188,76 @@ class RateLimitingTest(unittest.TestCase):
         self.assertIsNotNone(status)
         expected_backoff = main._BACKOFF_SECONDS[2]  # 3rd attempt
         self.assertEqual(status["backoff_seconds"], expected_backoff)
+
+
+class FirestoreRateLimitTest(unittest.TestCase):
+    """Firestore 永続化パスの動作（フェイククライアントで検証）"""
+
+    def setUp(self):
+        main._rate_limited_keys.clear()
+
+    def tearDown(self):
+        main._rate_limited_keys.clear()
+
+    def _make_db(self, doc):
+        db = Mock()
+        db.collection.return_value.document.return_value.get.return_value = doc
+        return db
+
+    def test_mark_rate_limited_persists_with_hashed_doc_id(self):
+        doc = Mock(exists=False)
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        expected_id = main._rate_limit_doc_id("secret-key")
+        self.assertNotIn("secret-key", expected_id)
+        db.collection.assert_called_with("rate_limits")
+        db.collection.return_value.document.assert_called_with(expected_id)
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 1)
+        self.assertEqual(saved["backoff_seconds"], main._BACKOFF_SECONDS[0])
+
+    def test_mark_rate_limited_resumes_count_from_firestore_after_restart(self):
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": 0.0,
+            "consecutive_count": 2,
+            "backoff_seconds": main._BACKOFF_SECONDS[1],
+        }
+        db = self._make_db(doc)
+        # メモリは空 = コンテナ再起動直後を再現
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 3)
+
+    def test_get_rate_limit_status_reads_active_backoff_from_firestore(self):
+        import time as time_module
+
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": time_module.time(),
+            "consecutive_count": 1,
+            "backoff_seconds": main._BACKOFF_SECONDS[0],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            status = main._get_rate_limit_status("other-key")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["backoff_seconds"], main._BACKOFF_SECONDS[0])
+
+    def test_get_rate_limit_status_deletes_expired_firestore_doc(self):
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": 0.0,
+            "consecutive_count": 1,
+            "backoff_seconds": main._BACKOFF_SECONDS[0],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            status = main._get_rate_limit_status("other-key")
+        self.assertIsNone(status)
+        doc.reference.delete.assert_called_once()
 
 
 class GCSTest(unittest.TestCase):
@@ -900,6 +982,145 @@ class ReadyzTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["keys_available"], 1)
         self.assertEqual(res.json()["keys_total"], 2)
+
+
+class GeminiApiKeysTest(unittest.TestCase):
+    """_gemini_api_keys の優先順・重複排除"""
+
+    def _env(self, **kwargs):
+        # 3 変数を明示的に設定/削除する patch.dict を返す
+        base = {k: "" for k in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GEMINI_PAID_API_KEY")}
+        base.update(kwargs)
+        return patch.dict(main.os.environ, base, clear=False)
+
+    def test_primary_only(self):
+        with self._env(GEMINI_API_KEY="k1"):
+            self.assertEqual(main._gemini_api_keys(), [("primary", "k1")])
+
+    def test_order_primary_extra_paid(self):
+        with self._env(GEMINI_API_KEY="k1", GEMINI_API_KEYS="k2,k3", GEMINI_PAID_API_KEY="k4"):
+            labels = [label for label, _ in main._gemini_api_keys()]
+            self.assertEqual(labels, ["primary", "extra_1", "extra_2", "paid"])
+
+    def test_deduplicates_repeated_keys(self):
+        # primary と同じ値が extra / paid に現れても 1 度だけ
+        with self._env(GEMINI_API_KEY="dup", GEMINI_API_KEYS="dup,other", GEMINI_PAID_API_KEY="dup"):
+            values = [value for _, value in main._gemini_api_keys()]
+            self.assertEqual(values, ["dup", "other"])
+
+    def test_empty_when_unset(self):
+        with self._env():
+            self.assertEqual(main._gemini_api_keys(), [])
+
+
+class GetGenaiClientTest(unittest.TestCase):
+    def setUp(self):
+        main._clients.clear()
+
+    def tearDown(self):
+        main._clients.clear()
+
+    def test_raises_503_when_no_keys(self):
+        with patch.object(main, "_gemini_api_keys", return_value=[]):
+            with self.assertRaises(HTTPException) as ctx:
+                main._get_genai_client()
+        self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_caches_client_per_key(self):
+        with patch.object(main.genai, "Client", side_effect=lambda api_key: Mock(name=api_key)) as ctor:
+            c1 = main._get_genai_client("key-a")
+            c2 = main._get_genai_client("key-a")
+        self.assertIs(c1, c2)
+        self.assertEqual(ctor.call_count, 1)
+
+
+class InkThresholdBoundaryTest(unittest.TestCase):
+    """histogram 化した _count_ink_pixels が旧ループ実装と一致すること"""
+
+    def setUp(self):
+        self.original = main.INK_THRESHOLD
+
+    def tearDown(self):
+        main.INK_THRESHOLD = self.original
+
+    def test_matches_naive_loop_across_thresholds(self):
+        img = Image.new("L", (16, 16))
+        img.putdata([0, 100, 200, 244, 245, 255] * 42 + [0, 0, 0, 0])
+        for threshold in (0, 1, 200, 245, 256):
+            main.INK_THRESHOLD = threshold
+            naive = sum(1 for v in img.getdata() if v < threshold)
+            self.assertEqual(main._count_ink_pixels(img.convert("RGB")), naive, f"threshold={threshold}")
+
+
+class EndpointSmokeTest(unittest.TestCase):
+    """GET エンドポイントと静的ファイル配信が 200 を返すこと"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._hits.clear()
+
+    def test_html_pages(self):
+        for path in ("/", "/drill", "/standards"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_static_assets(self):
+        for path in ("/theme.css", "/favicon.ico", "/favicon-32.png",
+                     "/apple-touch-icon.png", "/og.png"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_catalog_returns_only_verified(self):
+        data = self.client.get("/api/catalog").json()
+        self.assertTrue(data)
+        ids = {s["id"] for s in data}
+        verified_ids = {s["id"] for s in main.SYMBOLS.values() if s["verified"]}
+        self.assertEqual(ids, verified_ids)
+        self.assertIn("ref_svg", data[0])
+
+    def test_symbols_lists_all(self):
+        data = self.client.get("/api/symbols").json()
+        self.assertEqual(len(data), len(main.SYMBOLS))
+
+    def test_question_returns_verified_symbol(self):
+        body = self.client.get("/api/question").json()
+        self.assertIn(body["id"], main.SYMBOLS)
+        self.assertTrue(main.SYMBOLS[body["id"]]["verified"])
+
+    def test_healthz(self):
+        self.assertEqual(self.client.get("/healthz").json(), {"ok": True})
+
+
+class ReportEndpointTest(unittest.TestCase):
+    """/api/report の正常系と検証"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        self.symbol = next(s for s in main.SYMBOLS.values() if s["verified"])
+        main._hits.clear()
+
+    def _valid_checks(self):
+        checks = [{"feature": f"必須: {v}", "ok": True} for v in self.symbol["required_features"]]
+        checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
+        checks += [{"feature": f"識別: {v}の決定的特徴ではない", "ok": True} for v in self.symbol.get("confusable_symbols", [])]
+        return checks
+
+    def test_report_accepts_matching_checklist(self):
+        judgment = {"passed": True, "checks": self._valid_checks(), "mistakes": [], "observation": ""}
+        with patch.object(main, "_save_feedback") as save:
+            res = self.client.post(
+                "/api/report",
+                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"ok": True})
+
+    def test_report_unknown_symbol_returns_404_json(self):
+        judgment = {"passed": True, "checks": [], "mistakes": [], "observation": ""}
+        res = self.client.post(
+            "/api/report",
+            json={"symbol_id": "nope", "image_b64": inked_png_b64(), "judgment": judgment},
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("application/json", res.headers["content-type"])
 
 
 if __name__ == "__main__":
