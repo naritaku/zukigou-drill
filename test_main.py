@@ -218,9 +218,12 @@ class FirestoreRateLimitTest(unittest.TestCase):
         self.assertEqual(saved["backoff_seconds"], main._BACKOFF_SECONDS[0])
 
     def test_mark_rate_limited_resumes_count_from_firestore_after_restart(self):
+        import time as time_module
+
         doc = Mock(exists=True)
         doc.to_dict.return_value = {
-            "timestamp": 0.0,
+            # 最近の 429（リセット窓内）→ 段階を引き継ぐ
+            "timestamp": time_module.time(),
             "consecutive_count": 2,
             "backoff_seconds": main._BACKOFF_SECONDS[1],
         }
@@ -230,6 +233,22 @@ class FirestoreRateLimitTest(unittest.TestCase):
             main._mark_rate_limited("secret-key")
         saved = db.collection.return_value.document.return_value.set.call_args[0][0]
         self.assertEqual(saved["consecutive_count"], 3)
+
+    def test_mark_rate_limited_resets_count_when_record_is_stale(self):
+        """最後の 429 から _BACKOFF_RESET_SECONDS 超で経過していれば 1 に戻す"""
+        import time as time_module
+
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": time_module.time() - main._BACKOFF_RESET_SECONDS - 10,
+            "consecutive_count": 5,
+            "backoff_seconds": main._BACKOFF_SECONDS[4],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 1)
 
     def test_get_rate_limit_status_reads_active_backoff_from_firestore(self):
         import time as time_module
@@ -246,10 +265,11 @@ class FirestoreRateLimitTest(unittest.TestCase):
         self.assertIsNotNone(status)
         self.assertEqual(status["backoff_seconds"], main._BACKOFF_SECONDS[0])
 
-    def test_get_rate_limit_status_deletes_expired_firestore_doc(self):
+    def test_get_rate_limit_status_expired_returns_none_without_deleting(self):
+        """満了時は None を返すが、ドキュメントは削除しない（mark が段階を引き継げるように）"""
         doc = Mock(exists=True)
         doc.to_dict.return_value = {
-            "timestamp": 0.0,
+            "timestamp": 0.0,  # 遥か過去 = 満了
             "consecutive_count": 1,
             "backoff_seconds": main._BACKOFF_SECONDS[0],
         }
@@ -257,7 +277,102 @@ class FirestoreRateLimitTest(unittest.TestCase):
         with patch.object(main, "_get_firestore_client", return_value=db):
             status = main._get_rate_limit_status("other-key")
         self.assertIsNone(status)
-        doc.reference.delete.assert_called_once()
+        doc.reference.delete.assert_not_called()
+
+    def test_restart_resume_end_to_end_with_fake_db(self):
+        """FakeDB でストア永続を再現し、実フロー（get_status→mark）での引き継ぎを検証。
+
+        MUST①のリグレッション: 満了時に get_status が doc を消すと、この後の mark が
+        1 に戻ってしまう。消さない実装なら 2 に引き継がれる。
+        """
+        import time as time_module
+
+        store = {}
+
+        class FakeDoc:
+            def __init__(self, col, doc_id):
+                self.col, self.id = col, doc_id
+            @property
+            def reference(self):
+                return self
+            @property
+            def exists(self):
+                return self.id in self.col.store
+            def to_dict(self):
+                return dict(self.col.store.get(self.id, {}))
+            def get(self):
+                return self
+            def set(self, data):
+                self.col.store[self.id] = dict(data)
+            def delete(self):
+                self.col.store.pop(self.id, None)
+
+        class FakeCol:
+            def __init__(self, store):
+                self.store = store
+            def document(self, doc_id):
+                return FakeDoc(self, doc_id)
+
+        class FakeDB:
+            def __init__(self, store):
+                self._c = FakeCol(store)
+            def collection(self, name):
+                return self._c
+
+        db = FakeDB(store)
+        doc_id = main._rate_limit_doc_id("secret-key")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+            self.assertEqual(store[doc_id]["consecutive_count"], 1)
+
+            # 再起動を再現: メモリを消し、Firestore は残す
+            main._rate_limited_keys.clear()
+            # バックオフ満了させる
+            store[doc_id]["timestamp"] -= main._BACKOFF_SECONDS[0] + 1
+
+            # 実フロー: judge がまず get_status を呼ぶ（満了 → None、doc は残る）
+            self.assertIsNone(main._get_rate_limit_status("secret-key"))
+            self.assertIn(doc_id, store)  # 消えていない
+
+            # 直後に再び 429
+            main._mark_rate_limited("secret-key")
+            self.assertEqual(store[doc_id]["consecutive_count"], 2)
+
+
+class FirestoreClientCacheTest(unittest.TestCase):
+    """初期化失敗のキャッシュ（MUST②）"""
+
+    def setUp(self):
+        # このクラスは実 _get_firestore_client を検証するため、モジュールの
+        # 「常に None を返す」パッチャを一時停止する。
+        _firestore_patcher.stop()
+        self._orig_client = main._firestore_client
+        self._orig_unavail = main._firestore_unavailable
+        self._orig_ctor = main.firestore.Client
+
+    def tearDown(self):
+        main._firestore_client = self._orig_client
+        main._firestore_unavailable = self._orig_unavail
+        main.firestore.Client = self._orig_ctor
+        _firestore_patcher.start()
+
+    def test_init_failure_is_cached_and_not_retried(self):
+        calls = {"n": 0}
+
+        def boom(*a, **k):
+            calls["n"] += 1
+            raise RuntimeError("no ADC")
+
+        main.firestore.Client = boom
+        main._firestore_client = None
+        main._firestore_unavailable = False
+
+        self.assertIsNone(main._get_firestore_client())
+        self.assertIsNone(main._get_firestore_client())
+        self.assertIsNone(main._get_firestore_client())
+        # 実際の構築は 1 回だけ（以後はフラグで即 return）
+        self.assertEqual(calls["n"], 1)
+        self.assertTrue(main._firestore_unavailable)
 
 
 class GCSTest(unittest.TestCase):

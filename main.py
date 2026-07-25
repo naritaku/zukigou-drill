@@ -89,6 +89,7 @@ SYMBOLS = _load_symbols()
 _clients: dict[str, genai.Client] = {}
 _storage_client: Any = None
 _firestore_client: Any = None
+_firestore_unavailable = False  # 初期化に一度失敗したら以後は試行せず即メモリfallback
 _client_lock = threading.Lock()
 _storage_lock = threading.Lock()
 _firestore_lock = threading.Lock()
@@ -106,6 +107,10 @@ _BACKOFF_SECONDS = [
     36000,   # 失敗6回目：10時間
     86400,   # 失敗7回目以上：24時間
 ]
+
+# 最後の 429 からこの秒数を超えて経過していたら、エスカレーション段階をリセットする。
+# （長期間回復していたキーが再び 429 になったとき、過去の段階を引き継がず 1 から数え直す）
+_BACKOFF_RESET_SECONDS = _BACKOFF_SECONDS[-1]  # 24時間
 
 
 class RateLimitStatus(TypedDict):
@@ -163,14 +168,27 @@ def _rate_limit_doc_id(api_key: str) -> str:
 
 
 def _get_firestore_client() -> firestore.Client | None:
-    """Firestore クライアントを取得（シングルトン）。"""
-    global _firestore_client
-    if _firestore_client is None:
-        try:
-            _firestore_client = firestore.Client()
-        except Exception as e:
-            logger.warning(f"Failed to initialize Firestore client: {e}")
-            return None
+    """Firestore クライアントを取得（シングルトン）。
+
+    初期化に一度失敗したら `_firestore_unavailable` を立て、以後は即 None を返す。
+    これをしないと ADC 不在環境で呼び出し毎に firestore.Client() が
+    ~3 秒スタックし、レート制限チェック全体が詰まる。
+    """
+    global _firestore_client, _firestore_unavailable
+    if _firestore_client is not None:
+        return _firestore_client
+    if _firestore_unavailable:
+        return None
+    with _firestore_lock:
+        if _firestore_client is None and not _firestore_unavailable:
+            try:
+                _firestore_client = firestore.Client()
+            except Exception as e:
+                logger.warning(
+                    f"Firestore unavailable; falling back to in-memory rate limiting only: {e}"
+                )
+                _firestore_unavailable = True
+                return None
     return _firestore_client
 
 
@@ -215,10 +233,10 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
                             "consecutive_count": consecutive_count,
                             "backoff_seconds": backoff_seconds,
                         }
-                    else:
-                        # バックオフ期間終了 → Firestore から削除
-                        doc.reference.delete()
-                        return None
+                    # バックオフ満了 → 「現在は制限なし」を返すが、ドキュメントは削除しない。
+                    # 直後に再び 429 が来たとき _mark_rate_limited が段階を引き継げるようにする。
+                    # 古くなった記録の掃除は Firestore TTL ポリシー（timestamp ベース）に委ねる。
+                    return None
             except Exception as e:
                 logger.debug(f"Failed to read rate limit from Firestore: {e}")
 
@@ -232,7 +250,7 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
         elapsed = now - limited_at
 
         if elapsed >= backoff_seconds:
-            del _rate_limited_keys[api_key]
+            # 満了。エントリは消さず残し、引き継ぎに使う。陳腐化は _mark_rate_limited 側で判定。
             return None
 
         return {
@@ -243,22 +261,36 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
 
 
 def _mark_rate_limited(api_key: str) -> None:
-    """429エラーを記録し、バックオフカウントをインクリメント。Firestore に永続化。"""
+    """429エラーを記録し、バックオフカウントをインクリメント。Firestore に永続化。
+
+    直前の段階はメモリ→Firestore の順に引き継ぐ。ただし最後の 429 から
+    `_BACKOFF_RESET_SECONDS` を超えて経過している記録は陳腐化とみなし、1 から数え直す。
+    """
     now = time.time()
     doc_id = _rate_limit_doc_id(api_key)
     with _rate_limit_lock:
         db = _get_firestore_client()
+
+        # 直前の (記録時刻, 連続失敗回数) を取得。メモリ優先、無ければ Firestore。
+        last_at: float | None = None
         previous_count = 0
         if api_key in _rate_limited_keys:
-            _, previous_count = _rate_limited_keys[api_key]
+            last_at, previous_count = _rate_limited_keys[api_key]
         elif db:
             # 再起動直後はメモリが空。Firestore からバックオフ段階を引き継ぐ。
             try:
                 doc = db.collection("rate_limits").document(doc_id).get()
                 if doc.exists:
-                    previous_count = doc.to_dict().get("consecutive_count", 0)
+                    data = doc.to_dict()
+                    last_at = data.get("timestamp")
+                    previous_count = data.get("consecutive_count", 0)
             except Exception as e:
                 logger.debug(f"Failed to read rate limit from Firestore: {e}")
+
+        # 長期間回復していたキーは段階をリセット（過去の高い段階を引きずらない）
+        if last_at is not None and now - last_at > _BACKOFF_RESET_SECONDS:
+            previous_count = 0
+
         consecutive_count = min(previous_count + 1, len(_BACKOFF_SECONDS))
 
         _rate_limited_keys[api_key] = (now, consecutive_count)
