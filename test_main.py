@@ -103,6 +103,14 @@ class ImageValidationTest(unittest.TestCase):
             main._decode_png("data:image/png;base64,@@@not-base64@@@")
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_decode_png_rejects_non_png_magic(self):
+        """PNG マジックで始まらないバイト列は 400（PIL に渡す前に拒否）"""
+        not_png = base64.b64encode(b"this is definitely not a png file").decode("ascii")
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png(not_png)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "PNG image required")
+
 
 class JudgeEndpointTest(unittest.TestCase):
     def setUp(self):
