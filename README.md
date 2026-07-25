@@ -75,7 +75,7 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 - **Frontend**: HTML5 Canvas + Vanilla JS
 - **Backend**: FastAPI + Python
 - **AI**: Gemini vision (free tier + paid tier fallback)
-- **Infrastructure**: Cloud Run + Cloud Storage（任意）
+- **Infrastructure**: Cloud Run + Firestore + Cloud Storage（任意）
 - **CI/CD**: GitHub Actions + Workload Identity Federation
 
 ---
