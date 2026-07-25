@@ -1,37 +1,71 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 300" font-family="'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 400" font-family="'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif">
   <defs>
     <marker id="ah" markerWidth="10" markerHeight="8" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6 z" fill="#003e89"/>
     </marker>
+    <marker id="ahg" markerWidth="10" markerHeight="8" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#5a6270"/>
+    </marker>
   </defs>
 
   <!-- スマートフォン -->
-  <rect x="30" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
-  <text x="160" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">📱 スマートフォン</text>
-  <text x="160" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">Canvas 指描き</text>
-  <text x="160" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">PNG 正規化</text>
+  <rect x="20" y="30" width="250" height="180" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="145" y="70" text-anchor="middle" font-size="21" font-weight="700" fill="#003e89">📱 スマートフォン</text>
+  <text x="145" y="110" text-anchor="middle" font-size="15" fill="#1a1c1e">Canvas に指描き</text>
+  <text x="145" y="140" text-anchor="middle" font-size="15" fill="#1a1c1e">白背景化・余白トリミング</text>
+  <text x="145" y="170" text-anchor="middle" font-size="15" fill="#1a1c1e">長辺 512px に正規化</text>
 
   <!-- Cloud Run -->
-  <rect x="410" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
-  <text x="540" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">☁️ Cloud Run</text>
-  <text x="540" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">FastAPI + Python</text>
-  <text x="540" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">ルーブリック採点</text>
+  <rect x="415" y="30" width="250" height="180" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="540" y="70" text-anchor="middle" font-size="21" font-weight="700" fill="#003e89">☁️ Cloud Run</text>
+  <text x="540" y="110" text-anchor="middle" font-size="15" fill="#1a1c1e">PNG 検証・レート制限</text>
+  <text x="540" y="140" text-anchor="middle" font-size="15" fill="#1a1c1e">ルーブリックを差し込み</text>
+  <text x="540" y="170" text-anchor="middle" font-size="15" fill="#1a1c1e">コードで確定的に採点</text>
 
   <!-- Gemini -->
-  <rect x="790" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
-  <text x="920" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">🤖 Gemini Flash Lite</text>
-  <text x="920" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">特徴観察</text>
-  <text x="920" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">true / false</text>
+  <rect x="810" y="30" width="250" height="180" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="935" y="70" text-anchor="middle" font-size="21" font-weight="700" fill="#003e89">🤖 Gemini Flash Lite</text>
+  <text x="935" y="110" text-anchor="middle" font-size="15" fill="#1a1c1e">Temperature 0</text>
+  <text x="935" y="140" text-anchor="middle" font-size="15" fill="#1a1c1e">JSON Schema 固定</text>
+  <text x="935" y="170" text-anchor="middle" font-size="15" fill="#1a1c1e">特徴ごとに true / false</text>
 
   <!-- スマホ ⇄ Cloud Run -->
-  <line x1="295" y1="120" x2="402" y2="120" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
-  <text x="350" y="105" text-anchor="middle" font-size="15" fill="#003e89">PNG 画像</text>
-  <line x1="405" y1="180" x2="298" y2="180" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
-  <text x="350" y="212" text-anchor="middle" font-size="15" fill="#003e89">合否・理由</text>
+  <line x1="275" y1="95" x2="407" y2="95" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="341" y="80" text-anchor="middle" font-size="14" fill="#003e89">PNG 画像</text>
+  <line x1="407" y1="155" x2="278" y2="155" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="341" y="185" text-anchor="middle" font-size="14" fill="#003e89">合否・理由</text>
 
   <!-- Cloud Run ⇄ Gemini -->
-  <line x1="675" y1="120" x2="782" y2="120" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
-  <text x="730" y="105" text-anchor="middle" font-size="15" fill="#003e89">判定依頼</text>
-  <line x1="785" y1="180" x2="678" y2="180" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
-  <text x="730" y="212" text-anchor="middle" font-size="15" fill="#003e89">観察結果</text>
+  <line x1="670" y1="95" x2="802" y2="95" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="736" y="80" text-anchor="middle" font-size="14" fill="#003e89">画像 + 特徴リスト</text>
+  <line x1="802" y1="155" x2="673" y2="155" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="736" y="185" text-anchor="middle" font-size="14" fill="#003e89">観察 JSON</text>
+
+  <!-- Secret Manager -->
+  <rect x="60" y="270" width="250" height="100" rx="6" fill="#ffffff" stroke="#5a6270" stroke-width="2"/>
+  <text x="185" y="305" text-anchor="middle" font-size="18" font-weight="700" fill="#003e89">🔑 Secret Manager</text>
+  <text x="185" y="340" text-anchor="middle" font-size="15" fill="#1a1c1e">無料キー → 有料キーの順</text>
+
+  <!-- Firestore -->
+  <rect x="415" y="270" width="250" height="100" rx="6" fill="#ffffff" stroke="#5a6270" stroke-width="2"/>
+  <text x="540" y="305" text-anchor="middle" font-size="18" font-weight="700" fill="#003e89">🗄️ Firestore</text>
+  <text x="540" y="340" text-anchor="middle" font-size="15" fill="#1a1c1e">バックオフ 75 秒〜24 時間</text>
+
+  <!-- Cloud Storage -->
+  <rect x="770" y="270" width="250" height="100" rx="6" fill="#ffffff" stroke="#5a6270" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="895" y="305" text-anchor="middle" font-size="18" font-weight="700" fill="#5a6270">💾 Cloud Storage</text>
+  <text x="895" y="340" text-anchor="middle" font-size="15" fill="#1a1c1e">判定ログ 30 日 / 異議 90 日</text>
+
+  <!-- Cloud Run → Secret Manager -->
+  <line x1="455" y1="214" x2="290" y2="264" stroke="#5a6270" stroke-width="2" marker-end="url(#ahg)"/>
+  <text x="235" y="240" text-anchor="middle" font-size="14" fill="#5a6270">API キーを取得</text>
+
+  <!-- Cloud Run ⇄ Firestore -->
+  <line x1="522" y1="214" x2="522" y2="264" stroke="#5a6270" stroke-width="2" marker-end="url(#ahg)"/>
+  <line x1="558" y1="264" x2="558" y2="214" stroke="#5a6270" stroke-width="2" marker-end="url(#ahg)"/>
+  <text x="574" y="245" text-anchor="start" font-size="14" fill="#5a6270">状態を保存・復元</text>
+
+  <!-- Cloud Run → Cloud Storage -->
+  <line x1="655" y1="214" x2="800" y2="264" stroke="#5a6270" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ahg)"/>
+  <text x="835" y="252" text-anchor="middle" font-size="14" fill="#5a6270">任意・非同期</text>
 </svg>
