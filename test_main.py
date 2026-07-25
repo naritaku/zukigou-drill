@@ -69,6 +69,40 @@ class ImageValidationTest(unittest.TestCase):
             main.MAX_IMAGE_PIXELS = original_limit
         self.assertEqual(ctx.exception.status_code, 413)
 
+    def test_decode_png_rejects_oversized_base64_string(self):
+        """base64 文字列長が上限超過なら、デコード前に 413 で弾く（コスト保護）"""
+        original = main.MAX_IMAGE_B64_CHARS
+        try:
+            main.MAX_IMAGE_B64_CHARS = 10
+            with self.assertRaises(HTTPException) as ctx:
+                main._decode_png(inked_png_b64())  # 10 文字を超える
+        finally:
+            main.MAX_IMAGE_B64_CHARS = original
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_decode_png_rejects_empty_image(self):
+        """空 base64（デコード結果が空）は 400"""
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png("")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_decode_png_rejects_oversized_bytes(self):
+        """デコード後のバイト数が上限超過なら、PNG 検証前に 413（外部呼び出し前の門番）"""
+        original = main.MAX_IMAGE_BYTES
+        try:
+            main.MAX_IMAGE_BYTES = 10
+            with self.assertRaises(HTTPException) as ctx:
+                main._decode_png(png_b64(Image.new("RGB", (64, 64), "white")))
+        finally:
+            main.MAX_IMAGE_BYTES = original
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_decode_png_rejects_invalid_base64(self):
+        """base64 として不正な文字列は 400"""
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png("data:image/png;base64,@@@not-base64@@@")
+        self.assertEqual(ctx.exception.status_code, 400)
+
 
 class JudgeEndpointTest(unittest.TestCase):
     def setUp(self):
@@ -1088,6 +1122,11 @@ class ReadyzTest(unittest.TestCase):
             res = self.client.get("/readyz")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["keys_available"], 1)
+
+    def test_readyz_503_when_no_symbols_loaded(self):
+        with patch.object(main, "SYMBOLS", {}):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 503)
 
     def test_readyz_503_when_all_keys_rate_limited(self):
         main._mark_rate_limited("free-key")
