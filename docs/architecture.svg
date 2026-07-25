@@ -1,0 +1,26 @@
+```mermaid
+graph TD
+    A["📱 ブラウザ<br/>HTML5 Canvas<br/>指描き入力"] -->|PNG 画像| B["🖼️ 画像処理<br/>白背景化・トリミング<br/>正規化 512px"]
+    B -->|正規化PNG| C["☁️ Cloud Run<br/>FastAPI"]
+
+    C --> D["🔐 Rate Limiting<br/>Firestore"]
+    C --> E["📋 ルーブリック判定<br/>symbols.json"]
+    C -->|Gemini API| F["🤖 Gemini Vision<br/>特徴観察<br/>JSON Schema"]
+
+    F -->|特徴検出| G["🎯 採点ロジック<br/>合否・スコア計算"]
+    G -->|判定結果| C
+
+    C -->|判定結果| H["💾 GCS（Optional）<br/>judgments/disputed"]
+
+    C -->|JSON| I["📊 ブラウザ表示<br/>合否・スコア<br/>不足特徴・お手本"]
+
+    style A fill:#e3f2fd,stroke:#1976d2
+    style B fill:#e3f2fd,stroke:#1976d2
+    style C fill:#e3f2fd,stroke:#1976d2
+    style D fill:#fff3e0,stroke:#f57c00
+    style E fill:#e8f5e9,stroke:#388e3c
+    style F fill:#fff3e0,stroke:#f57c00
+    style G fill:#e8f5e9,stroke:#388e3c
+    style H fill:#fce4ec,stroke:#c2185b,stroke-dasharray: 5 5
+    style I fill:#f3e5f5,stroke:#7b1fa2
+```
