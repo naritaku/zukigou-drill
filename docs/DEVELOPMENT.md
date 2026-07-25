@@ -33,7 +33,8 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 **フォールバック機構:**
 - 任意のキーが rate limit（429）を返すと、自動的に次のキーへ移行
 - バックオフ戦略: 75秒 → 10分 → 1時間 → ... → 24時間
-- Firestore に状態が永続化され、Cloud Run 再起動後も保持
+- バックオフ状態は Firestore に永続化され、Cloud Run 再起動後も復元される
+  （Firestore 不達時はインスタンス内メモリにフォールバック）
 
 ### 環境変数リファレンス
 
@@ -49,15 +50,20 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `FEEDBACK_BUCKET`: GCS バケット（異議報告保存・学習データ用）
 
 **通信制限:**
-- `RATE_LIMIT`: 既定 20（秒間リクエスト数上限）
+- `RATE_LIMIT`: 既定 20（`RATE_WINDOW` あたりの最大リクエスト数）
 - `RATE_WINDOW`: 既定 60（秒単位のウィンドウ）
+- `TRUST_FORWARDED_FOR`: 既定 1。`X-Forwarded-For` の**末尾**をクライアント識別子に使う。
+  Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
+  無効にすると全ユーザーが 1 つのレート制限バケットを共有してしまう）。
+  プロキシを介さず直接公開する場合のみ `0` にする。
 
 **画像検証:**
 - `MAX_IMAGE_BYTES`: 既定 1000000
 - `MAX_IMAGE_B64_CHARS`: 既定 1500000
 - `MAX_IMAGE_PIXELS`: 既定 4000000
-- `MAX_IMAGE_DIM`: 既定 1024
-- `MIN_INK_PIXELS`: 既定 20
+- `MAX_IMAGE_DIM`: 既定 1024（超過分はサーバー側で縮小）
+- `MIN_INK_PIXELS`: 既定 20（未満なら白紙として 400 で拒否）
+- `INK_THRESHOLD`: 既定 245（この輝度未満をインクとみなす）
 
 ---
 
@@ -375,9 +381,11 @@ done
 gcloud storage buckets create gs://zukigou-all-judgments --location=asia-northeast1
 echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/lc.json
 gcloud storage buckets update gs://zukigou-all-judgments --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill \
-  --set-env-vars ALL_JUDGMENTS_BUCKET=zukigou-all-judgments
 ```
+
+バケット名は **Deploy Cloud Run ワークフローの `all_judgments_bucket` 入力**に指定する。
+`gcloud run services update` で手動設定しても、次回デプロイの `--set-env-vars` が
+環境変数一式を置き換えるため消える。
 
 ### 異議報告の保存（学習データ用）
 
@@ -392,9 +400,9 @@ gcloud run services update zukigou-drill \
 gcloud storage buckets create gs://zukigou-feedback --location=asia-northeast1
 echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}' > /tmp/lc.json
 gcloud storage buckets update gs://zukigou-feedback --lifecycle-file=/tmp/lc.json
-gcloud run services update zukigou-drill \
-  --set-env-vars FEEDBACK_BUCKET=zukigou-feedback
 ```
+
+同様に、バケット名は **Deploy Cloud Run ワークフローの `feedback_bucket` 入力**に指定する。
 
 ---
 
@@ -421,14 +429,25 @@ gcloud run services update zukigou-drill \
 
 ### Rate Limiting の自動フォールバック
 
-API キーが連続して失敗した場合、指数バックオフを自動適用：
+API キーが 429（RESOURCE_EXHAUSTED）を返した場合、そのキーを一定時間スキップし、
+連続回数に応じて待機時間を延ばす：
 
 - 1 回目失敗: 75 秒待機
 - 2 回目: 10 分
 - 3 回目: 1 時間
 - ...最大 24 時間
 
-状態は Firestore に永続化され、Cloud Run の再起動後も保持される。
+バックオフ中のキーは `/api/judge` の試行対象から外れ、次のキーへフォールバックする。
+全キーがバックオフ中の場合、`/readyz` は 503 を返す。
+
+**Firestore による永続化**: バックオフ状態は `rate_limits` コレクションに保存される
+（キーごとに `timestamp` / `consecutive_count` / `backoff_seconds`）。これにより
+Cloud Run の再起動・スケールアウトをまたいでも状態が復元され、無駄な再試行と 429 の
+再発を防ぐ。Firestore に到達できない場合はインスタンス内メモリへ自動フォールバックし、
+判定自体は継続する（機能低下のみで停止しない）。
+
+Firestore のセットアップ（データベース作成・IAM）は
+[deploy_memo/gcp-setup.md](../deploy_memo/gcp-setup.md) を参照。
 
 ---
 

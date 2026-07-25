@@ -53,7 +53,11 @@ Google AI Dojo Season 2 提出作品
 
 デプロイ済みサービス: https://zukigou-drill-vnoxzmytga-an.a.run.app
 
-![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+<div style="margin: 16px 0; padding: 24px; background: #f3f4f6; border-radius: 4px; display: inline-block;">
+
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=25&data=https://zukigou-drill-vnoxzmytga-an.a.run.app)
+
+</div>
 
 ### ローカルで実行
 
@@ -71,7 +75,7 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 - **Frontend**: HTML5 Canvas + Vanilla JS
 - **Backend**: FastAPI + Python
 - **AI**: Gemini vision (free tier + paid tier fallback)
-- **Infrastructure**: Cloud Run + Cloud Storage + Firestore
+- **Infrastructure**: Cloud Run + Firestore + Cloud Storage（任意）
 - **CI/CD**: GitHub Actions + Workload Identity Federation
 
 ---

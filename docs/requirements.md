@@ -82,7 +82,7 @@
 **バックエンド**:
 - Cloud Run (asia-northeast1)
 - Gemini API (free tier + paid tier fallback)
-- Firestore (レート制限状態管理）
+- Firestore (レート制限バックオフの永続化)
 - Cloud Storage (判定データ保存・オプション)
 
 ### 対象外スコープ
@@ -112,7 +112,7 @@
 
 - **Cloud Run**: asia-northeast1, CPU 1, Memory 512MB, max-instances 10
 - **Gemini API**: free tier + paid tier
-- **Firestore**: レート制限管理用（小規模読み書き）
+- **Firestore**: `rate_limits` コレクション（レート制限バックオフの永続化）
 - **Cloud Storage**: GCS バケット（判定データ・異議報告・オプション）
 
 ---
@@ -178,7 +178,7 @@
 
 | 制約 | 理由 | 対応 |
 |------|------|------|
-| DB なし | 状態管理を Cloud Run に託す | Firestore で最小限の状態管理 |
+| 永続 DB なし | 判定は状態を持たずスケールさせる | レート制限状態のみ Firestore に永続化 |
 | 外部 API 依存 | Gemini API の可用性に依存 | フォールバック・レート制限対応 |
 | ブラウザ Canvas のみ | touch/mouse イベント対応に限定 | タッチペン完全対応は将来課題 |
 
@@ -187,7 +187,7 @@
 | リスク | 影響 | 軽減 |
 |--------|------|------|
 | Gemini API 配額切れ | 採点不可 | 複数キー・有料キーフォールバック |
-| Cloud Run 再起動 | レート制限状態喪失 | Firestore に永続化 |
+| Cloud Run 再起動 | レート制限状態喪失 | Firestore にバックオフ状態を永続化して復元 |
 | ルーブリック誤り | 採点ぶれ | 専門家レビュー・継続改善 |
 | スパム/DoS | サービス停止 | Cloud Armor・レート制限 |
 

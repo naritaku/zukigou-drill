@@ -1,26 +1,37 @@
-```mermaid
-graph TD
-    A["📱 ブラウザ<br/>HTML5 Canvas<br/>指描き入力"] -->|PNG 画像| B["🖼️ 画像処理<br/>白背景化・トリミング<br/>正規化 512px"]
-    B -->|正規化PNG| C["☁️ Cloud Run<br/>FastAPI"]
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 300" font-family="'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="8" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#003e89"/>
+    </marker>
+  </defs>
 
-    C --> D["🔐 Rate Limiting<br/>Firestore"]
-    C --> E["📋 ルーブリック判定<br/>symbols.json"]
-    C -->|Gemini API| F["🤖 Gemini Vision<br/>特徴観察<br/>JSON Schema"]
+  <!-- スマートフォン -->
+  <rect x="30" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="160" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">📱 スマートフォン</text>
+  <text x="160" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">Canvas 指描き</text>
+  <text x="160" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">PNG 正規化</text>
 
-    F -->|特徴検出| G["🎯 採点ロジック<br/>合否・スコア計算"]
-    G -->|判定結果| C
+  <!-- Cloud Run -->
+  <rect x="410" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="540" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">☁️ Cloud Run</text>
+  <text x="540" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">FastAPI + Python</text>
+  <text x="540" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">ルーブリック採点</text>
 
-    C -->|判定結果| H["💾 GCS（Optional）<br/>judgments/disputed"]
+  <!-- Gemini -->
+  <rect x="790" y="70" width="260" height="160" rx="6" fill="#eef2fa" stroke="#003e89" stroke-width="2.5"/>
+  <text x="920" y="115" text-anchor="middle" font-size="24" font-weight="700" fill="#003e89">🤖 Gemini Flash Lite</text>
+  <text x="920" y="155" text-anchor="middle" font-size="18" fill="#1a1c1e">特徴観察</text>
+  <text x="920" y="185" text-anchor="middle" font-size="18" fill="#1a1c1e">true / false</text>
 
-    C -->|JSON| I["📊 ブラウザ表示<br/>合否・スコア<br/>不足特徴・お手本"]
+  <!-- スマホ ⇄ Cloud Run -->
+  <line x1="295" y1="120" x2="402" y2="120" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="350" y="105" text-anchor="middle" font-size="15" fill="#003e89">PNG 画像</text>
+  <line x1="405" y1="180" x2="298" y2="180" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="350" y="212" text-anchor="middle" font-size="15" fill="#003e89">合否・理由</text>
 
-    style A fill:#e3f2fd,stroke:#1976d2
-    style B fill:#e3f2fd,stroke:#1976d2
-    style C fill:#e3f2fd,stroke:#1976d2
-    style D fill:#fff3e0,stroke:#f57c00
-    style E fill:#e8f5e9,stroke:#388e3c
-    style F fill:#fff3e0,stroke:#f57c00
-    style G fill:#e8f5e9,stroke:#388e3c
-    style H fill:#fce4ec,stroke:#c2185b,stroke-dasharray: 5 5
-    style I fill:#f3e5f5,stroke:#7b1fa2
-```
+  <!-- Cloud Run ⇄ Gemini -->
+  <line x1="675" y1="120" x2="782" y2="120" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="730" y="105" text-anchor="middle" font-size="15" fill="#003e89">判定依頼</text>
+  <line x1="785" y1="180" x2="678" y2="180" stroke="#003e89" stroke-width="2.5" marker-end="url(#ah)"/>
+  <text x="730" y="212" text-anchor="middle" font-size="15" fill="#003e89">観察結果</text>
+</svg>

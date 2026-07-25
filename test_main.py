@@ -4,11 +4,24 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
+from google.genai import errors as genai_errors
 from PIL import Image, ImageDraw
 
 import main
+
+# 全テストの既定では Firestore に接続しない（開発機の ADC で実 DB に触れるのを防ぐ）。
+# Firestore パスは FirestoreRateLimitTest がフェイククライアントで検証する。
+_firestore_patcher = patch.object(main, "_get_firestore_client", return_value=None)
+
+
+def setUpModule():
+    _firestore_patcher.start()
+
+
+def tearDownModule():
+    _firestore_patcher.stop()
 
 
 def png_b64(img: Image.Image) -> str:
@@ -157,6 +170,7 @@ class JudgeEndpointTest(unittest.TestCase):
 class RateLimitingTest(unittest.TestCase):
     def setUp(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
 
     def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
         status = main._get_rate_limit_status("test-key")
@@ -175,6 +189,194 @@ class RateLimitingTest(unittest.TestCase):
         self.assertIsNotNone(status)
         expected_backoff = main._BACKOFF_SECONDS[2]  # 3rd attempt
         self.assertEqual(status["backoff_seconds"], expected_backoff)
+
+
+class FirestoreRateLimitTest(unittest.TestCase):
+    """Firestore 永続化パスの動作（フェイククライアントで検証）"""
+
+    def setUp(self):
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def tearDown(self):
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def _make_db(self, doc):
+        db = Mock()
+        db.collection.return_value.document.return_value.get.return_value = doc
+        return db
+
+    def test_mark_rate_limited_persists_with_hashed_doc_id(self):
+        doc = Mock(exists=False)
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        expected_id = main._rate_limit_doc_id("secret-key")
+        self.assertNotIn("secret-key", expected_id)
+        db.collection.assert_called_with("rate_limits")
+        db.collection.return_value.document.assert_called_with(expected_id)
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 1)
+        self.assertEqual(saved["backoff_seconds"], main._BACKOFF_SECONDS[0])
+
+    def test_mark_rate_limited_resumes_count_from_firestore_after_restart(self):
+        import time as time_module
+
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            # 最近の 429（リセット窓内）→ 段階を引き継ぐ
+            "timestamp": time_module.time(),
+            "consecutive_count": 2,
+            "backoff_seconds": main._BACKOFF_SECONDS[1],
+        }
+        db = self._make_db(doc)
+        # メモリは空 = コンテナ再起動直後を再現
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 3)
+
+    def test_mark_rate_limited_resets_count_when_record_is_stale(self):
+        """最後の 429 から _BACKOFF_RESET_SECONDS 超で経過していれば 1 に戻す"""
+        import time as time_module
+
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": time_module.time() - main._BACKOFF_RESET_SECONDS - 10,
+            "consecutive_count": 5,
+            "backoff_seconds": main._BACKOFF_SECONDS[4],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+        saved = db.collection.return_value.document.return_value.set.call_args[0][0]
+        self.assertEqual(saved["consecutive_count"], 1)
+
+    def test_get_rate_limit_status_reads_active_backoff_from_firestore(self):
+        import time as time_module
+
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": time_module.time(),
+            "consecutive_count": 1,
+            "backoff_seconds": main._BACKOFF_SECONDS[0],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            status = main._get_rate_limit_status("other-key")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["backoff_seconds"], main._BACKOFF_SECONDS[0])
+
+    def test_get_rate_limit_status_expired_returns_none_without_deleting(self):
+        """満了時は None を返すが、ドキュメントは削除しない（mark が段階を引き継げるように）"""
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": 0.0,  # 遥か過去 = 満了
+            "consecutive_count": 1,
+            "backoff_seconds": main._BACKOFF_SECONDS[0],
+        }
+        db = self._make_db(doc)
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            status = main._get_rate_limit_status("other-key")
+        self.assertIsNone(status)
+        doc.reference.delete.assert_not_called()
+
+    def test_restart_resume_end_to_end_with_fake_db(self):
+        """FakeDB でストア永続を再現し、実フロー（get_status→mark）での引き継ぎを検証。
+
+        MUST①のリグレッション: 満了時に get_status が doc を消すと、この後の mark が
+        1 に戻ってしまう。消さない実装なら 2 に引き継がれる。
+        """
+        import time as time_module
+
+        store = {}
+
+        class FakeDoc:
+            def __init__(self, col, doc_id):
+                self.col, self.id = col, doc_id
+            @property
+            def reference(self):
+                return self
+            @property
+            def exists(self):
+                return self.id in self.col.store
+            def to_dict(self):
+                return dict(self.col.store.get(self.id, {}))
+            def get(self):
+                return self
+            def set(self, data):
+                self.col.store[self.id] = dict(data)
+            def delete(self):
+                self.col.store.pop(self.id, None)
+
+        class FakeCol:
+            def __init__(self, store):
+                self.store = store
+            def document(self, doc_id):
+                return FakeDoc(self, doc_id)
+
+        class FakeDB:
+            def __init__(self, store):
+                self._c = FakeCol(store)
+            def collection(self, name):
+                return self._c
+
+        db = FakeDB(store)
+        doc_id = main._rate_limit_doc_id("secret-key")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("secret-key")
+            self.assertEqual(store[doc_id]["consecutive_count"], 1)
+
+            # 再起動を再現: メモリを消し、Firestore は残す
+            main._rate_limited_keys.clear()
+            main._fs_status_cache.clear()
+            # バックオフ満了させる
+            store[doc_id]["timestamp"] -= main._BACKOFF_SECONDS[0] + 1
+
+            # 実フロー: judge がまず get_status を呼ぶ（満了 → None、doc は残る）
+            self.assertIsNone(main._get_rate_limit_status("secret-key"))
+            self.assertIn(doc_id, store)  # 消えていない
+
+            # 直後に再び 429
+            main._mark_rate_limited("secret-key")
+            self.assertEqual(store[doc_id]["consecutive_count"], 2)
+
+
+class FirestoreClientCacheTest(unittest.TestCase):
+    """初期化失敗のキャッシュ（MUST②）"""
+
+    def setUp(self):
+        # このクラスは実 _get_firestore_client を検証するため、モジュールの
+        # 「常に None を返す」パッチャを一時停止する。
+        _firestore_patcher.stop()
+        self._orig_client = main._firestore_client
+        self._orig_unavail = main._firestore_unavailable
+        self._orig_ctor = main.firestore.Client
+
+    def tearDown(self):
+        main._firestore_client = self._orig_client
+        main._firestore_unavailable = self._orig_unavail
+        main.firestore.Client = self._orig_ctor
+        _firestore_patcher.start()
+
+    def test_init_failure_is_cached_and_not_retried(self):
+        calls = {"n": 0}
+
+        def boom(*a, **k):
+            calls["n"] += 1
+            raise RuntimeError("no ADC")
+
+        main.firestore.Client = boom
+        main._firestore_client = None
+        main._firestore_unavailable = False
+
+        self.assertIsNone(main._get_firestore_client())
+        self.assertIsNone(main._get_firestore_client())
+        self.assertIsNone(main._get_firestore_client())
+        # 実際の構築は 1 回だけ（以後はフラグで即 return）
+        self.assertEqual(calls["n"], 1)
+        self.assertTrue(main._firestore_unavailable)
 
 
 class GCSTest(unittest.TestCase):
@@ -503,6 +705,7 @@ class GenerateVisionResultTest(unittest.TestCase):
 
     def setUp(self):
         main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
         main._clients.clear()
 
     def test_generate_vision_result_no_api_keys_raises_503(self):
@@ -662,8 +865,11 @@ class GenerateVisionResultTest(unittest.TestCase):
         free_client = Mock()
         paid_client = Mock()
 
-        rate_limit_error = RuntimeError("rate limited")
-        rate_limit_error.status_code = 429
+        # SDK が実際に送出する例外型を使う。自作の RuntimeError に status_code を
+        # 付ける形だと、実装が誤った属性名を見ていても検出できない。
+        rate_limit_error = genai_errors.ClientError(
+            429, {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        )
         free_client.models.generate_content.side_effect = rate_limit_error
         paid_client.models.generate_content.return_value.text = response_text
 
@@ -680,6 +886,22 @@ class GenerateVisionResultTest(unittest.TestCase):
         status = main._get_rate_limit_status("free-key")
         self.assertIsNotNone(status)
         self.assertEqual(status["consecutive_count"], 1)
+
+    def test_is_rate_limit_error_detects_real_sdk_exception(self):
+        """SDK の ClientError(429) を 429 として判定できる（属性名リグレッション防止）"""
+        exc = genai_errors.ClientError(
+            429, {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        )
+        # SDK は status_code ではなく code を持つ
+        self.assertFalse(hasattr(exc, "status_code"))
+        self.assertEqual(exc.code, 429)
+        self.assertTrue(main._is_rate_limit_error(exc))
+
+    def test_is_rate_limit_error_ignores_other_errors(self):
+        """429 以外のエラーはレート制限として扱わない"""
+        exc = genai_errors.ClientError(400, {"error": {"message": "bad request", "status": "INVALID_ARGUMENT"}})
+        self.assertFalse(main._is_rate_limit_error(exc))
+        self.assertFalse(main._is_rate_limit_error(RuntimeError("boom")))
 
     def test_generate_vision_result_skips_rate_limited_keys(self):
         """レート制限中のキーはスキップ"""
@@ -758,6 +980,269 @@ class EnvironmentConfigTest(unittest.TestCase):
 
         self.assertIsInstance(models, list)
         self.assertGreater(len(models), 0)
+
+
+class ApiErrorContractTest(unittest.TestCase):
+    """API エンドポイントのエラー応答が JSON であることを保証する"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._hits.clear()
+
+    def test_api_404_returns_json_not_html(self):
+        """/api/* の 404 は HTML ページではなく JSON を返す"""
+        res = self.client.post(
+            "/api/judge", json={"symbol_id": "no-such-symbol", "image_b64": inked_png_b64()}
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("application/json", res.headers["content-type"])
+        self.assertEqual(res.json()["detail"], "unknown symbol")
+
+    def test_html_404_still_returns_page(self):
+        """通常ページの 404 は HTML のまま"""
+        res = self.client.get("/no-such-page")
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("text/html", res.headers["content-type"])
+
+    def test_openapi_schema_is_not_exposed(self):
+        """/openapi.json を公開しない"""
+        self.assertEqual(self.client.get("/openapi.json").status_code, 404)
+
+
+class ClientIpTest(unittest.TestCase):
+    """レート制限のキーになるクライアント識別子の決定ロジック"""
+
+    def _request(self, headers=None, peer="10.0.0.1"):
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+            "client": (peer, 12345),
+        }
+        return Request(scope)
+
+    def test_uses_last_forwarded_for_entry(self):
+        """X-Forwarded-For の末尾（インフラが付与する実接続元）を使う"""
+        req = self._request({"x-forwarded-for": "1.2.3.4, 5.6.7.8"})
+        self.assertEqual(main._client_ip(req), "5.6.7.8")
+
+    def test_ignores_client_spoofed_prefix(self):
+        """クライアントが左側に偽装値を入れても末尾が採用される"""
+        req = self._request({"x-forwarded-for": "attacker-spoofed, 203.0.113.9"})
+        self.assertEqual(main._client_ip(req), "203.0.113.9")
+
+    def test_falls_back_to_peer_without_header(self):
+        """ヘッダが無ければ接続元 IP を使う"""
+        self.assertEqual(main._client_ip(self._request(peer="192.0.2.5")), "192.0.2.5")
+
+    def test_distinct_clients_get_distinct_rate_buckets(self):
+        """異なるクライアントが別々のレート制限バケットになる"""
+        main._hits.clear()
+        original = main.RATE_LIMIT
+        try:
+            main.RATE_LIMIT = 1
+            main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.1"}))
+            # 別クライアントは影響を受けない
+            main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.2"}))
+            # 同じクライアントの2回目は弾かれる
+            with self.assertRaises(HTTPException) as ctx:
+                main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.1"}))
+            self.assertEqual(ctx.exception.status_code, 429)
+        finally:
+            main.RATE_LIMIT = original
+            main._hits.clear()
+
+
+class VisionResultObservationTest(unittest.TestCase):
+    """observation の長さ超過で候補を失わないこと"""
+
+    def test_long_observation_is_truncated_not_rejected(self):
+        payload = json.dumps(
+            {
+                "required": [True],
+                "forbidden": [],
+                "confusions": [],
+                "observation": "あ" * (main.MAX_OBSERVATION_CHARS + 200),
+            },
+            ensure_ascii=False,
+        )
+        result = main.VisionResult.model_validate_json(payload)
+        self.assertEqual(len(result.observation), main.MAX_OBSERVATION_CHARS)
+
+
+class ReadyzTest(unittest.TestCase):
+    """/readyz が全キーのレート制限状態を反映する"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def tearDown(self):
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def test_readyz_ok_when_key_available(self):
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["keys_available"], 1)
+
+    def test_readyz_503_when_all_keys_rate_limited(self):
+        main._mark_rate_limited("free-key")
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 503)
+
+    def test_readyz_ok_when_one_of_two_keys_available(self):
+        main._mark_rate_limited("free-key")
+        with patch.object(
+            main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]
+        ):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["keys_available"], 1)
+        self.assertEqual(res.json()["keys_total"], 2)
+
+
+class GeminiApiKeysTest(unittest.TestCase):
+    """_gemini_api_keys の優先順・重複排除"""
+
+    def _env(self, **kwargs):
+        # 3 変数を明示的に設定/削除する patch.dict を返す
+        base = {k: "" for k in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GEMINI_PAID_API_KEY")}
+        base.update(kwargs)
+        return patch.dict(main.os.environ, base, clear=False)
+
+    def test_primary_only(self):
+        with self._env(GEMINI_API_KEY="k1"):
+            self.assertEqual(main._gemini_api_keys(), [("primary", "k1")])
+
+    def test_order_primary_extra_paid(self):
+        with self._env(GEMINI_API_KEY="k1", GEMINI_API_KEYS="k2,k3", GEMINI_PAID_API_KEY="k4"):
+            labels = [label for label, _ in main._gemini_api_keys()]
+            self.assertEqual(labels, ["primary", "extra_1", "extra_2", "paid"])
+
+    def test_deduplicates_repeated_keys(self):
+        # primary と同じ値が extra / paid に現れても 1 度だけ
+        with self._env(GEMINI_API_KEY="dup", GEMINI_API_KEYS="dup,other", GEMINI_PAID_API_KEY="dup"):
+            values = [value for _, value in main._gemini_api_keys()]
+            self.assertEqual(values, ["dup", "other"])
+
+    def test_empty_when_unset(self):
+        with self._env():
+            self.assertEqual(main._gemini_api_keys(), [])
+
+
+class GetGenaiClientTest(unittest.TestCase):
+    def setUp(self):
+        main._clients.clear()
+
+    def tearDown(self):
+        main._clients.clear()
+
+    def test_raises_503_when_no_keys(self):
+        with patch.object(main, "_gemini_api_keys", return_value=[]):
+            with self.assertRaises(HTTPException) as ctx:
+                main._get_genai_client()
+        self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_caches_client_per_key(self):
+        with patch.object(main.genai, "Client", side_effect=lambda api_key: Mock(name=api_key)) as ctor:
+            c1 = main._get_genai_client("key-a")
+            c2 = main._get_genai_client("key-a")
+        self.assertIs(c1, c2)
+        self.assertEqual(ctor.call_count, 1)
+
+
+class InkThresholdBoundaryTest(unittest.TestCase):
+    """histogram 化した _count_ink_pixels が旧ループ実装と一致すること"""
+
+    def setUp(self):
+        self.original = main.INK_THRESHOLD
+
+    def tearDown(self):
+        main.INK_THRESHOLD = self.original
+
+    def test_matches_naive_loop_across_thresholds(self):
+        img = Image.new("L", (16, 16))
+        img.putdata([0, 100, 200, 244, 245, 255] * 42 + [0, 0, 0, 0])
+        for threshold in (0, 1, 200, 245, 256):
+            main.INK_THRESHOLD = threshold
+            naive = sum(1 for v in img.getdata() if v < threshold)
+            self.assertEqual(main._count_ink_pixels(img.convert("RGB")), naive, f"threshold={threshold}")
+
+
+class EndpointSmokeTest(unittest.TestCase):
+    """GET エンドポイントと静的ファイル配信が 200 を返すこと"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        main._hits.clear()
+
+    def test_html_pages(self):
+        for path in ("/", "/drill", "/standards"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_static_assets(self):
+        for path in ("/theme.css", "/favicon.ico", "/favicon-32.png",
+                     "/apple-touch-icon.png", "/og.png"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_catalog_returns_only_verified(self):
+        data = self.client.get("/api/catalog").json()
+        self.assertTrue(data)
+        ids = {s["id"] for s in data}
+        verified_ids = {s["id"] for s in main.SYMBOLS.values() if s["verified"]}
+        self.assertEqual(ids, verified_ids)
+        self.assertIn("ref_svg", data[0])
+
+    def test_symbols_lists_all(self):
+        data = self.client.get("/api/symbols").json()
+        self.assertEqual(len(data), len(main.SYMBOLS))
+
+    def test_question_returns_verified_symbol(self):
+        body = self.client.get("/api/question").json()
+        self.assertIn(body["id"], main.SYMBOLS)
+        self.assertTrue(main.SYMBOLS[body["id"]]["verified"])
+
+    def test_healthz(self):
+        self.assertEqual(self.client.get("/healthz").json(), {"ok": True})
+
+
+class ReportEndpointTest(unittest.TestCase):
+    """/api/report の正常系と検証"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        self.symbol = next(s for s in main.SYMBOLS.values() if s["verified"])
+        main._hits.clear()
+
+    def _valid_checks(self):
+        checks = [{"feature": f"必須: {v}", "ok": True} for v in self.symbol["required_features"]]
+        checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
+        checks += [{"feature": f"識別: {v}の決定的特徴ではない", "ok": True} for v in self.symbol.get("confusable_symbols", [])]
+        return checks
+
+    def test_report_accepts_matching_checklist(self):
+        judgment = {"passed": True, "checks": self._valid_checks(), "mistakes": [], "observation": ""}
+        with patch.object(main, "_save_feedback") as save:
+            res = self.client.post(
+                "/api/report",
+                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"ok": True})
+
+    def test_report_unknown_symbol_returns_404_json(self):
+        judgment = {"passed": True, "checks": [], "mistakes": [], "observation": ""}
+        res = self.client.post(
+            "/api/report",
+            json={"symbol_id": "nope", "image_b64": inked_png_b64(), "judgment": judgment},
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("application/json", res.headers["content-type"])
 
 
 if __name__ == "__main__":
