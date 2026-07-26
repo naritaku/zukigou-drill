@@ -16,6 +16,11 @@ RUNTIME_SA_ID="${RUNTIME_SA_ID:-zukigou-drill-run}"
 RUNTIME_SA="${RUNTIME_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 DEPLOYER_SA="github-actions-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
 
+# --source デプロイのビルドを実行する SA。これも既定では compute SA が使われる。
+BUILD_SA_ID="${BUILD_SA_ID:-zukigou-drill-build}"
+BUILD_SA="${BUILD_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
 # Cloud Run に渡すシークレット。ここに無いものはデプロイ時にスキップされる。
 SECRETS=(GEMINI_API_KEY GEMINI_API_KEYS GEMINI_PAID_API_KEY)
 
@@ -91,6 +96,98 @@ setup_runtime_sa() {
   else
     echo "  - deployer SA が無いので actAs はスキップ"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# ビルド専用 SA
+#
+# `gcloud run deploy --source` のビルドも、既定では compute SA（roles/editor）で
+# 実行される。ワークフローは --build-service-account でこの SA を明示する。
+# ---------------------------------------------------------------------------
+setup_build_sa() {
+  echo "▶ ビルド専用 SA を用意 (${BUILD_SA})"
+  if gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    echo "  - SA: 既存"
+  else
+    gcloud iam service-accounts create "$BUILD_SA_ID" \
+      --project "$PROJECT_ID" \
+      --display-name "zukigou-drill Cloud Build" \
+      --quiet >/dev/null
+    echo "  - SA: 作成"
+  fi
+
+  local i
+  for i in $(seq 1 12); do
+    if gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT_ID" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 5
+  done
+
+  # cloudbuild.builds.builder : ビルド実行（ソース取得・ログ・イメージ push を含む）
+  # artifactregistry.writer   : cloud-run-source-deploy リポジトリへの push
+  # logging.logWriter         : ビルドログの書き込み
+  for role in roles/cloudbuild.builds.builder roles/artifactregistry.writer roles/logging.logWriter; do
+    for i in $(seq 1 6); do
+      if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member "serviceAccount:${BUILD_SA}" \
+        --role "$role" --condition=None --quiet >/dev/null 2>&1; then
+        echo "  - ${role}: OK"
+        break
+      fi
+      if [ "$i" -eq 6 ]; then
+        echo "  - ${role}: 付与に失敗（伝播待ちの可能性。再実行してください）" >&2
+        return 1
+      fi
+      sleep 5
+    done
+  done
+
+  if gcloud iam service-accounts describe "$DEPLOYER_SA" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    gcloud iam service-accounts add-iam-policy-binding "$BUILD_SA" \
+      --project "$PROJECT_ID" \
+      --member "serviceAccount:${DEPLOYER_SA}" \
+      --role roles/iam.serviceAccountUser --quiet >/dev/null
+    echo "  - deployer の actAs: OK"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 既定 compute SA の editor 剥がし
+#
+# GCP は既定の compute SA に roles/editor を付ける。ランタイムとビルドの両方を
+# 専用 SA に移したあとであれば不要になる。**移行とデプロイ成功を確認してから**
+# 実行する（先に外すとビルドが失敗する）。
+# ---------------------------------------------------------------------------
+harden_compute_sa() {
+  echo "▶ 既定 compute SA から roles/editor を外す (${COMPUTE_SA})"
+
+  local current_runtime
+  current_runtime="$(gcloud run services describe zukigou-drill --project "$PROJECT_ID" \
+    --region "${REGION:-asia-northeast1}" \
+    --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || true)"
+  if [ "$current_runtime" = "$COMPUTE_SA" ] || [ -z "$current_runtime" ]; then
+    echo "  ! 稼働中サービスがまだ compute SA を使っています（${current_runtime:-取得失敗}）。" >&2
+    echo "    runtime-sa と build-sa を適用し、デプロイ成功を確認してから実行してください。" >&2
+    return 1
+  fi
+  echo "  - 稼働中のランタイム SA: ${current_runtime}（compute SA ではない）"
+
+  if ! gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:${COMPUTE_SA} AND bindings.role:roles/editor" \
+    --format="value(bindings.role)" | grep -q editor; then
+    echo "  - roles/editor: 既に付いていない"
+    return 0
+  fi
+
+  gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+    --member "serviceAccount:${COMPUTE_SA}" \
+    --role roles/editor --quiet >/dev/null
+  echo "  - roles/editor: 削除"
+  echo "    ※ 次回のデプロイが通ることを確認してください。問題が出たら以下で戻せます:"
+  echo "      gcloud projects add-iam-policy-binding $PROJECT_ID \\"
+  echo "        --member serviceAccount:${COMPUTE_SA} --role roles/editor"
 }
 
 # ---------------------------------------------------------------------------
@@ -190,6 +287,18 @@ for limit in metric.get("consumerQuotaLimits", []):
     --filter="bindings.members:${RUNTIME_SA}" \
     --format="value(bindings.role)" | sed 's/^/  - /'
 
+  echo "▶ ビルド SA のプロジェクトロール"
+  gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:${BUILD_SA}" \
+    --format="value(bindings.role)" | sed 's/^/  - /'
+
+  echo "▶ 既定 compute SA のプロジェクトロール（roles/editor が無いのが望ましい）"
+  gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:${COMPUTE_SA}" \
+    --format="value(bindings.role)" | sed 's/^/  - /'
+
   echo "▶ 稼働中サービスのランタイム SA"
   gcloud run services describe zukigou-drill --project "$PROJECT_ID" \
     --region "${REGION:-asia-northeast1}" \
@@ -197,10 +306,14 @@ for limit in metric.get("consumerQuotaLimits", []):
 }
 
 case "$MODE" in
-  runtime-sa) setup_runtime_sa ;;
-  secrets)    grant_secrets ;;
-  quota)      set_quota ;;
-  verify)     verify ;;
-  all)        setup_runtime_sa; echo; grant_secrets; echo; set_quota; echo; verify ;;
-  *)          echo "使用方法: bash scripts/setup-gcp-guardrails.sh [runtime-sa|secrets|quota|verify|all]" >&2; exit 2 ;;
+  runtime-sa)       setup_runtime_sa ;;
+  build-sa)         setup_build_sa ;;
+  harden-compute-sa) harden_compute_sa ;;
+  secrets)          grant_secrets ;;
+  quota)            set_quota ;;
+  verify)           verify ;;
+  # all に harden-compute-sa は含めない。専用 SA でのデプロイ成功を確認したあとに
+  # 明示的に実行する運用にする。
+  all)              setup_runtime_sa; echo; setup_build_sa; echo; grant_secrets; echo; set_quota; echo; verify ;;
+  *)                echo "使用方法: bash scripts/setup-gcp-guardrails.sh [runtime-sa|build-sa|harden-compute-sa|secrets|quota|verify|all]" >&2; exit 2 ;;
 esac

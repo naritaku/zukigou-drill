@@ -241,11 +241,22 @@ GitHub Actions が Google Cloud に認証するための準備。
    `secretAccessor` が必要（無いとリビジョン作成が `Permission denied on secret`
    で失敗する。ビルドは通るため最後まで気付きにくい）。
 
+   `--source` デプロイの**ビルド**も既定では compute SA で実行されるため、
+   こちらも専用 SA に分ける（ワークフローが `--build-service-account` で指定）。
+
    ```bash
-   bash scripts/setup-gcp-guardrails.sh runtime-sa   # SA 作成 + 最小ロール + actAs
+   bash scripts/setup-gcp-guardrails.sh runtime-sa   # ランタイム SA + 最小ロール + actAs
+   bash scripts/setup-gcp-guardrails.sh build-sa     # ビルド SA + 最小ロール + actAs
    bash scripts/setup-gcp-guardrails.sh secrets      # シークレットごとの参照権
    bash scripts/setup-gcp-guardrails.sh verify       # 付与状況と実効ロールを確認
+
+   # 上記で1回デプロイが成功したのを確認してから、既定 SA の全権を剥がす
+   bash scripts/setup-gcp-guardrails.sh harden-compute-sa
    ```
+
+   `harden-compute-sa` は既定の compute SA から `roles/editor` を外す。**順序が重要**で、
+   ランタイムとビルドの両方を専用 SA に移す前に外すとビルドが失敗する。
+   スクリプト側でも、稼働中サービスがまだ compute SA を使っていれば中断する。
 
    付与するロールは Firestore 用の `roles/datastore.user` とログ用の
    `roles/logging.logWriter` のみ。GCS 保存を有効にする場合は、対象バケットに
