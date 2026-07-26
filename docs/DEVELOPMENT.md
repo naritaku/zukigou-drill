@@ -324,16 +324,25 @@ gcloud beta run domain-mappings create \
 ### 定義の役割分け
 
 - **`features`**: 学習者・UI 表示向けの短い説明（採点には使わない）
+- **`common_mistakes`**: 解説ページに出す「よくある間違い」
+- **`description`**: 用途の説明。解説ページと、判定後の結果カードに表示する
 - **`required_features`**: 採点用ルーブリックの正本。必須特徴を個別の文で定義
-- **`forbidden_features`**: 記号に存在してはいけない構造。類似記号との差分を優先
-- **`confusable_symbols`**: 誤認しやすい記号と判断基準
+- **`forbidden_features`**: 記号に存在してはいけない構造。**類似記号との弁別条件もここに書く**
+
+採点は `required_features` がすべて true、`forbidden_features` がすべて false の
+**2 条件**で確定する。かつて存在した `confusable_symbols` は、プロンプトのトークンを
+食う割に弁別へ寄与しなかったため削除済み。似た記号を区別したい場合は、
+両方の記号の `forbidden_features` に相互排他になる条件を書く
+（例: 分岐器は「水平線が円を貫通する」、分配器は「水平線が円を貫通している」を禁止）。
 
 ### チェックリスト
 
 - [ ] 各チェック項目が「画像を見て true/false で答えられる」文か
 - [ ] 「きれい」「十分」など主観語を避けた
 - [ ] `ref_svg` の全構成要素が `required_features` または `forbidden_features` に対応
+- [ ] 既存記号と図形が一致しないか確認した（一致する場合は手描き判定で区別できない）
 - [ ] 参考書・規格票で形状を確認し、`"verified": true` をセット
+- [ ] `python3 -m unittest test_main` が通る（`symbols.json` は起動時に検証される）
 
 ### スケジュール
 

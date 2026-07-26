@@ -11,9 +11,10 @@
   - 記号のみの練習（説明・採点なしの基本モード）
 
 - [x] **AI による自動採点**
-  - 各記号の必須特徴・禁止特徴・類似記号を観察
+  - 各記号の必須特徴・禁止特徴を観察（類似記号との弁別は禁止特徴に書き下す）
   - 決定的な合否判定（構造的にコード判定）
   - スコア算出と不足特徴の詳細フィードバック
+  - 判定後に記号の名称と用途を表示（第二次検定は記号から名称・説明を答えさせるため）
 
 - [x] **ユーザー認証なし**
   - ログイン機能不要
@@ -57,15 +58,19 @@
 
 ### 対象記号
 
-第二次検定 設問 2 の出題実績に基づく 5 カテゴリ：
+第二次検定 設問 2 の出題実績と設備系統図の頻出度に基づく 9 カテゴリ：
 
-- **電話設備** (tel-handset, tel-jack, ...)
-- **インターホン** (interphone-bell, ...)
-- **テレビ共聴** (tv-antenna, ...)
-- **LAN 情報** (lan-terminal, ...)
-- **放送設備** (broadcast-terminal, ...)
+- **テレビ共聴** 13 (`tv_antenna`, `tap_off_1`, `distributor_2way`, `head_end`, ...)
+- **共通・配線材料** 10 (`earth`, `pull_box`, `distribution_board`, `vvf_joint_box`, ...)
+- **電話設備** 7 (`kanyu_phone`, `naisen_phone`, `protector`, `terminal_board`, ...)
+- **警報・呼出・表示** 7 (`push_button`, `bell`, `buzzer`, `chime`, ...)
+- **インターホン** 5 (`interphone_master`, `doorphone`, ...)
+- **放送設備** 4 (`speaker`, `attenuator`, `horn_speaker`, ...)
+- **LAN・情報設備** 4 (`info_outlet`, `router`, `switching_hub`, ...)
+- **電気時計設備** 3 (`slave_clock`, `master_clock`, ...)
+- **映像設備** 1 (`screen`)
 
-合計: 20-30 記号（verified のみ出題）
+合計: 54 記号（`verified: true` のみ出題）。最新の内訳は `GET /api/symbols` が正本。
 
 ### 対応環境
 
