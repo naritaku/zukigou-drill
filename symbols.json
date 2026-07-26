@@ -670,21 +670,22 @@
       "verified": true,
       "features": [
         "円が1つ描かれている",
-        "円の中に平行な斜線が2本ある",
+        "円の中に平行な斜線が3本ある",
         "塗りつぶしはない"
       ],
       "common_mistakes": [
-        "斜線を1本しか描かない",
+        "斜線の本数が3本でない",
         "斜線を交差させてしまう"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='26'/><line x1='32' y1='64' x2='64' y2='32'/><line x1='38' y1='70' x2='70' y2='38'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='26'/><line x1='26' y1='58' x2='58' y2='26'/><line x1='32' y1='68' x2='68' y2='32'/><line x1='42' y1='74' x2='74' y2='42'/></svg>",
       "required_features": [
         "円が1つ描かれている",
-        "円の内部に、左下から右上へ向かう斜線が2本ある",
-        "2本の斜線は互いに平行で交差していない"
+        "円の内部に、左下から右上へ向かう斜線が3本ある",
+        "3本の斜線は互いに平行で交差していない"
       ],
       "forbidden_features": [
-        "斜線が1本だけである",
+        "斜線が3本より少ない",
+        "斜線が3本より多い",
         "斜線が交差してX形になっている",
         "円の内部が塗りつぶされている",
         "外形が四角形である"
@@ -941,22 +942,24 @@
       "verified": true,
       "features": [
         "四角形の枠がある",
-        "枠の中に音符(円と縦線)がある",
-        "縦線は円の右側から上へ伸びる"
+        "枠の中に音符(塗りつぶした玉と縦線)がある",
+        "縦線は玉の右側から上へ伸びる"
       ],
       "common_mistakes": [
+        "玉を塗りつぶさない",
         "縦線を描き忘れる",
         "縦線を左側に付ける"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><rect x='30' y='28' width='40' height='44'/><circle cx='46' cy='58' r='7'/><line x1='53' y1='58' x2='53' y2='36'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><rect x='30' y='28' width='40' height='44'/><circle cx='46' cy='58' r='7' fill='#1a1c1e' stroke='none'/><line x1='53' y1='58' x2='53' y2='36'/></svg>",
       "required_features": [
         "四角形の枠が描かれている",
-        "枠の内部に円が1つあり、その円から縦線が上へ伸びている(音符の形)",
-        "縦線は円の右側に付いている"
+        "枠の内部に塗りつぶした円(音符の玉)が1つある",
+        "玉から縦線が上へ伸びており、縦線は玉の右側に付いている"
       ],
       "forbidden_features": [
-        "枠の中が円だけで縦線がない",
-        "縦線が円の左側に付いている",
+        "音符の玉が塗りつぶされていない",
+        "枠の中が玉だけで縦線がない",
+        "縦線が玉の左側に付いている",
         "枠の中が文字である"
       ],
       "description": "チャイム音による呼出装置。枠内の音符で表す。"
@@ -1210,22 +1213,24 @@
       "features": [
         "円が二重に描かれている",
         "内側の円の中に左向きの三角形がある",
-        "三角形は塗りつぶされていない"
+        "三角形の中に塗りつぶした丸がある"
       ],
       "common_mistakes": [
-        "一重円で描いてスピーカや子機と混同する",
+        "三角形の中の黒丸を描き忘れる",
+        "一重円で描いて子機やスピーカと混同する",
         "三角形の向きを逆にする"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='21'/><polygon points='34,50 62,36 62,64'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='21'/><polygon points='34,50 62,36 62,64'/><circle cx='52' cy='50' r='5' fill='#1a1c1e' stroke='none'/></svg>",
       "required_features": [
         "円が二重に描かれている",
         "内側の円の中に三角形があり、頂点が左を向いている",
-        "三角形が塗りつぶされていない"
+        "三角形の内部に塗りつぶした丸が1つある"
       ],
       "forbidden_features": [
         "円が一重である",
+        "三角形の内部に塗りつぶした丸がない",
         "三角形の頂点が右を向いている",
-        "円の中が文字である"
+        "三角形の全体が塗りつぶされている"
       ],
       "description": "スピーカー型インターホンの親機。二重円で子機と区別する。"
     },
