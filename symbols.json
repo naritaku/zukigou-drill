@@ -1,5 +1,5 @@
 {
-  "_note": "JIS C 0303:2000 の図記号スクショ(2026-07-22 照合)に基づく。features は表示用の短い説明、required_features は判定用の正本として扱う。将来的には features を required_features から生成するなど、手動二重管理を避ける構造へ移行する。",
+  "_note": "JIS C 0303:2000 の図記号スクショ(2026-07-22 照合)に基づく。2026-07-26 に JIS 抽出図(図記号.drawio)と全件照合し、保安器・パラボラアンテナ・情報用アウトレットを修正、28 記号を追加した。抽出図は塗りつぶし情報が欠落していたため、塗り(警報盤の市松・押しボタン・表示スイッチ)は初版の抽出図と JIS 慣行に合わせている。features は表示用の短い説明、required_features は判定用の正本として扱う。将来的には features を required_features から生成するなど、手動二重管理を避ける構造へ移行する。",
   "symbols": [
     {
       "id": "earth",
@@ -70,7 +70,7 @@
       "common_mistakes": [
         "テレビジョンアンテナ(T字)と混同する"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M50 30 A 20 20 0 0 1 50 70'/><polyline points='50,40 90,40 90,60 50,60'/><line x1='50' y1='40' x2='90' y2='60'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M28 28 A 22 22 0 0 1 28 72'/><polyline points='50,39 91,39 91,61 50,61'/><line x1='50' y1='39' x2='91' y2='61'/></svg>",
       "required_features": [
         "画像の左側に開いた半円(弧)が描かれている",
         "半円の弧が、横長の四角形の画像左側(開いた辺)に水平方向の隙間なく接している",
@@ -307,7 +307,7 @@
       "common_mistakes": [
         "電話用アウトレット(中が塗り丸)と混同する"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='26'/><rect x='44' y='31' width='12' height='38' fill='#1a1c1e' stroke='none'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='26'/><rect x='38' y='31' width='24' height='38' fill='#1a1c1e' stroke='none'/></svg>",
       "required_features": [
         "円が描かれている",
         "円の中央に塗りつぶした縦長の棒(長方形)がある",
@@ -374,18 +374,23 @@
       "verified": true,
       "features": [
         "四角形の枠が描かれている",
-        "枠の内部に向かい合う一対の接点(弧・半円状の要素)が描かれている",
-        "枠の中は文字ではない"
+        "枠の内部の中央に円が1つある",
+        "円の左右に短い縦線が1本ずつある"
       ],
       "common_mistakes": [
+        "円を描かず接点だけにする",
+        "縦線を円の上下に描く",
         "端子盤(枠+水平線)と混同する"
       ],
-      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><rect x='26' y='28' width='48' height='44'/><line x1='40' y1='38' x2='40' y2='62'/><path d='M40 50 q9 -9 0 -12 M40 50 q9 9 0 12' /><line x1='60' y1='38' x2='60' y2='62'/><path d='M60 50 q-9 -9 0 -12 M60 50 q-9 9 0 12'/></svg>",
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><rect x='24' y='22' width='52' height='56'/><circle cx='50' cy='50' r='16'/><line x1='34' y1='34' x2='34' y2='66'/><line x1='66' y1='34' x2='66' y2='66'/></svg>",
       "required_features": [
         "四角形の枠が描かれている",
-        "枠の内部に、向かい合う一対の接点(弧・半円状の要素)が描かれている"
+        "枠の内部の中央に円が1つ描かれている",
+        "円の左側と右側に短い縦線が1本ずつある"
       ],
       "forbidden_features": [
+        "枠の内部に円がない",
+        "縦線が円の上下にある",
         "枠の中が文字である",
         "枠の中が水平線1本だけである"
       ],
@@ -657,6 +662,760 @@
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='14' y1='50' x2='62' y2='50'/><circle cx='72' cy='50' r='10'/></svg>",
       "description": "テレビ受信機を接続する端子。2端子の場合は2を傍記する。"
+    },
+    {
+      "id": "vvf_joint_box",
+      "name": "VVF用ジョイントボックス",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "円が1つ描かれている",
+        "円の中に平行な斜線が2本ある",
+        "塗りつぶしはない"
+      ],
+      "common_mistakes": [
+        "斜線を1本しか描かない",
+        "斜線を交差させてしまう"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='26'/><line x1='32' y1='64' x2='64' y2='32'/><line x1='38' y1='70' x2='70' y2='38'/></svg>",
+      "required_features": [
+        "円が1つ描かれている",
+        "円の内部に、左下から右上へ向かう斜線が2本ある",
+        "2本の斜線は互いに平行で交差していない"
+      ],
+      "forbidden_features": [
+        "斜線が1本だけである",
+        "斜線が交差してX形になっている",
+        "円の内部が塗りつぶされている",
+        "外形が四角形である"
+      ],
+      "description": "VVFケーブル相互を接続する箱。円の中の平行斜線で一般のジョイントボックスと区別する。"
+    },
+    {
+      "id": "juden_point",
+      "name": "受電点",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "折れ線がジグザグ(Z字)に折れている",
+        "右下から下向きの縦線が伸びている",
+        "円や四角の枠はない"
+      ],
+      "common_mistakes": [
+        "縦線を描き忘れる",
+        "枠で囲んでしまう"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='53,18 20,32 80,32 51,48 51,82'/></svg>",
+      "required_features": [
+        "折れ線が上下にジグザグ(Z字)に折れている",
+        "折れ線の下側から下向きの縦線が1本伸びている",
+        "円や四角形の枠がない"
+      ],
+      "forbidden_features": [
+        "閉じた図形(円・四角形)がある",
+        "下向きの縦線がない",
+        "直線1本だけである"
+      ],
+      "description": "引込線から構内へ電力・通信を受け取る点。系統図では引込口の起点として示す。"
+    },
+    {
+      "id": "oa_board",
+      "name": "OA盤",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "横長の長方形の外枠がある",
+        "枠内に左下から右上への斜線が1本ある",
+        "塗りつぶしがない"
+      ],
+      "common_mistakes": [
+        "分電盤と混同して片側を塗りつぶす",
+        "配電盤と混同して斜線を2本描く"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='22' y='34' width='56' height='32'/><line x1='22' y1='66' x2='78' y2='34'/></svg>",
+      "required_features": [
+        "横長の長方形の外枠がある",
+        "枠内に画像の左下から右上へ向かう斜線(/)が1本ある",
+        "枠の内部に塗りつぶしがない"
+      ],
+      "forbidden_features": [
+        "斜線で分かれた領域が塗りつぶされている",
+        "斜線が2本ありX形になっている",
+        "斜線が右下向き(＼)である"
+      ],
+      "description": "OA機器用の電源・配線を収める盤。分電盤と違い塗りつぶさず、斜線1本で表す。"
+    },
+    {
+      "id": "alarm_board",
+      "name": "警報盤",
+      "category": "共通・配線材料",
+      "verified": true,
+      "features": [
+        "横長の長方形が縦横の中央線で4区画に分かれている",
+        "対角にある2区画が塗りつぶされている",
+        "市松模様になっている"
+      ],
+      "common_mistakes": [
+        "隣り合う2区画を塗ってしまう",
+        "塗りつぶしを忘れる"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='22' y='34' width='56' height='32'/><line x1='50' y1='34' x2='50' y2='66'/><line x1='22' y1='50' x2='78' y2='50'/><rect x='50' y='34' width='28' height='16' fill='#1a1c1e' stroke='none'/><rect x='22' y='50' width='28' height='16' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "横長の長方形の枠が、縦の中央線と横の中央線で4つの区画に分かれている",
+        "4区画のうち対角に位置する2区画が塗りつぶされている",
+        "塗りつぶした区画は辺で隣り合っていない(市松模様)"
+      ],
+      "forbidden_features": [
+        "4区画すべてが塗りつぶされている",
+        "塗りつぶした2区画が辺で隣り合っている",
+        "塗りつぶしがまったくない"
+      ],
+      "description": "警報の発報状態を表示する盤。市松模様の塗り分けで他の盤と区別する。"
+    },
+    {
+      "id": "tenkanki",
+      "name": "転換器",
+      "category": "電話設備",
+      "verified": true,
+      "features": [
+        "四角形の枠がある",
+        "枠の中に円が1つある",
+        "円の下端から下へ縦線が伸びて枠の下辺に達する"
+      ],
+      "common_mistakes": [
+        "縦線を描き忘れる",
+        "円を塗りつぶす"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><rect x='30' y='28' width='40' height='44'/><circle cx='50' cy='46' r='11'/><line x1='50' y1='57' x2='50' y2='72'/></svg>",
+      "required_features": [
+        "四角形の枠が描かれている",
+        "枠の内部に円が1つ描かれている",
+        "円の下端から下向きに縦線が伸び、枠の下辺に達している"
+      ],
+      "forbidden_features": [
+        "枠の中に円がない",
+        "円から伸びる縦線がない",
+        "枠の中が文字である"
+      ],
+      "description": "電話回線の接続先を切り替える器具。枠内の円と引出線で表す。"
+    },
+    {
+      "id": "kyokusen_board",
+      "name": "局線表示盤",
+      "category": "電話設備",
+      "verified": true,
+      "features": [
+        "横長の長方形が二重の枠で描かれている",
+        "内側の枠が縦の仕切り線で4区画に分かれている",
+        "塗りつぶしはない"
+      ],
+      "common_mistakes": [
+        "枠を一重で描いて表示器(盤)と同じにしてしまう",
+        "仕切り線の本数を間違える"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='18' y='32' width='64' height='36'/><rect x='23' y='37' width='54' height='26'/><line x1='36.5' y1='37' x2='36.5' y2='63'/><line x1='50' y1='37' x2='50' y2='63'/><line x1='63.5' y1='37' x2='63.5' y2='63'/></svg>",
+      "required_features": [
+        "横長の長方形の枠が二重に描かれている",
+        "内側の枠の中に縦の仕切り線が3本あり、4つの区画に分かれている",
+        "仕切り線は縦向きである"
+      ],
+      "forbidden_features": [
+        "枠が一重である",
+        "仕切り線が横向きである",
+        "区画が塗りつぶされている"
+      ],
+      "description": "局線(外線)の使用状態を表示する盤。二重枠で表示器(盤)と区別する。"
+    },
+    {
+      "id": "composite_outlet",
+      "name": "複合アウトレット",
+      "category": "LAN・情報設備",
+      "verified": true,
+      "features": [
+        "円が1つ描かれている",
+        "円の中にひし形が内接している",
+        "ひし形は塗りつぶされていない"
+      ],
+      "common_mistakes": [
+        "通信用アウトレット(塗り丸)や情報用アウトレット(塗り縦棒)と混同する",
+        "ひし形を塗りつぶす"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='26'/><polygon points='50,26 74,50 50,74 26,50'/></svg>",
+      "required_features": [
+        "円が1つ描かれている",
+        "円の内部にひし形(45度傾いた四角形)があり、4つの頂点が円周に接している",
+        "ひし形が塗りつぶされていない"
+      ],
+      "forbidden_features": [
+        "円の中が塗りつぶした丸である",
+        "円の中が塗りつぶした縦棒である",
+        "内部の四角形の辺が水平・垂直になっている(傾いていない)"
+      ],
+      "description": "電話とLANなど複数用途をまとめた差込口。円に内接するひし形で表す。"
+    },
+    {
+      "id": "push_button",
+      "name": "押しボタン",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "正方形の枠がある",
+        "枠の中央に塗りつぶした円がある",
+        "枠は一重である"
+      ],
+      "common_mistakes": [
+        "円を塗りつぶさない",
+        "表示スイッチと混同して枠を二重にする"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='30' y='30' width='40' height='40'/><circle cx='50' cy='50' r='11' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "正方形の枠が描かれている",
+        "枠の中央に円があり、内部が塗りつぶされている",
+        "枠は一重である"
+      ],
+      "forbidden_features": [
+        "中の円が塗りつぶされていない",
+        "枠が二重である",
+        "枠の中が文字である"
+      ],
+      "description": "呼出や警報を発信するボタン。塗りつぶした円で押しボタンであることを示す。"
+    },
+    {
+      "id": "bell",
+      "name": "ベル",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "四角形の枠がある",
+        "枠の下辺の中央に小さな円が外側に接している",
+        "円は枠の内部にない"
+      ],
+      "common_mistakes": [
+        "円を枠の中に描いてしまう",
+        "円を塗りつぶす"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='30' y='26' width='40' height='36'/><circle cx='50' cy='69' r='7'/></svg>",
+      "required_features": [
+        "四角形の枠が描かれている",
+        "枠の下辺の中央に小さな円が枠の外側に接している",
+        "小さな円は枠の内部に入っていない"
+      ],
+      "forbidden_features": [
+        "円が枠の内部にある",
+        "円が枠の上側や横側に付いている",
+        "円が塗りつぶされている"
+      ],
+      "description": "打鈴による警報・呼出装置。枠の下に付く小円がベルの発音部を表す。"
+    },
+    {
+      "id": "buzzer",
+      "name": "ブザー",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "四角形の枠がある",
+        "枠の左上の角から右上へ斜線が1本伸びている",
+        "斜線は枠の外に出ている"
+      ],
+      "common_mistakes": [
+        "斜線を枠の内側に描く",
+        "斜線の向きを逆にする"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><rect x='30' y='34' width='40' height='36'/><line x1='30' y1='34' x2='74' y2='21'/></svg>",
+      "required_features": [
+        "四角形の枠が描かれている",
+        "枠の左上の角から右上方向へ斜線が1本伸びている",
+        "斜線は枠の上辺より上の外側に出ている"
+      ],
+      "forbidden_features": [
+        "斜線が枠の内部だけにある",
+        "斜線が2本以上ある",
+        "枠の下側に斜線が付いている"
+      ],
+      "description": "ブザーによる警報・呼出装置。枠から外へ出る斜線が発音部を表す。"
+    },
+    {
+      "id": "chime",
+      "name": "チャイム",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "四角形の枠がある",
+        "枠の中に音符(円と縦線)がある",
+        "縦線は円の右側から上へ伸びる"
+      ],
+      "common_mistakes": [
+        "縦線を描き忘れる",
+        "縦線を左側に付ける"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><rect x='30' y='28' width='40' height='44'/><circle cx='46' cy='58' r='7'/><line x1='53' y1='58' x2='53' y2='36'/></svg>",
+      "required_features": [
+        "四角形の枠が描かれている",
+        "枠の内部に円が1つあり、その円から縦線が上へ伸びている(音符の形)",
+        "縦線は円の右側に付いている"
+      ],
+      "forbidden_features": [
+        "枠の中が円だけで縦線がない",
+        "縦線が円の左側に付いている",
+        "枠の中が文字である"
+      ],
+      "description": "チャイム音による呼出装置。枠内の音符で表す。"
+    },
+    {
+      "id": "display_unit",
+      "name": "表示器(盤)",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "横長の長方形の枠がある",
+        "枠内に縦の仕切り線が3本あり4区画に分かれている",
+        "枠は一重である"
+      ],
+      "common_mistakes": [
+        "局線表示盤と混同して枠を二重にする",
+        "仕切り線を横向きに描く"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='18' y='36' width='64' height='28'/><line x1='34' y1='36' x2='34' y2='64'/><line x1='50' y1='36' x2='50' y2='64'/><line x1='66' y1='36' x2='66' y2='64'/></svg>",
+      "required_features": [
+        "横長の長方形の枠が描かれている",
+        "枠の内部に縦の仕切り線が3本あり、4つの区画に分かれている",
+        "枠は一重である"
+      ],
+      "forbidden_features": [
+        "枠が二重である",
+        "仕切り線が横向きである",
+        "区画が塗りつぶされている"
+      ],
+      "description": "警報や呼出の発生場所を区画で表示する器具。一重枠に縦仕切りで表す。"
+    },
+    {
+      "id": "display_switch",
+      "name": "表示スイッチ",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "正方形の枠が二重に描かれている",
+        "内側の枠の中央に塗りつぶした円がある"
+      ],
+      "common_mistakes": [
+        "押しボタンと混同して枠を一重にする",
+        "円を塗りつぶさない"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='26' y='26' width='48' height='48'/><rect x='32' y='32' width='36' height='36'/><circle cx='50' cy='50' r='10' fill='#1a1c1e' stroke='none'/></svg>",
+      "required_features": [
+        "正方形の枠が二重に描かれている",
+        "内側の枠の中央に円があり、内部が塗りつぶされている"
+      ],
+      "forbidden_features": [
+        "枠が一重である",
+        "中の円が塗りつぶされていない",
+        "中に円がない"
+      ],
+      "description": "表示機能を備えたスイッチ。二重枠で押しボタンと区別する。"
+    },
+    {
+      "id": "indicator_lamp",
+      "name": "表示灯",
+      "category": "警報・呼出・表示",
+      "verified": true,
+      "features": [
+        "円が1つだけ描かれている",
+        "円の内部に線や文字がない",
+        "塗りつぶしはない"
+      ],
+      "common_mistakes": [
+        "内部に文字や記号を書き込む",
+        "二重円にして親時計などと混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='26'/></svg>",
+      "required_features": [
+        "円が1つだけ描かれている",
+        "円の内部に線・文字・図形がない",
+        "円が塗りつぶされていない"
+      ],
+      "forbidden_features": [
+        "円が二重である",
+        "円の内部に線や文字がある",
+        "円が塗りつぶされている"
+      ],
+      "description": "動作状態を光で示す表示灯。単独の円で表す。"
+    },
+    {
+      "id": "slave_clock",
+      "name": "子時計",
+      "category": "電気時計設備",
+      "verified": true,
+      "features": [
+        "円が1つ描かれている",
+        "円の中心から真上へ半径の線が1本ある",
+        "円の中心から真右へ半径の線が1本ある"
+      ],
+      "common_mistakes": [
+        "半径の線を斜めに描く",
+        "二重円にして親時計と混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='26'/><line x1='50' y1='50' x2='50' y2='24'/><line x1='50' y1='50' x2='76' y2='50'/></svg>",
+      "required_features": [
+        "円が1つ描かれている",
+        "円の中心から真上へ向かう半径の線が1本ある",
+        "円の中心から真右へ向かう半径の線が1本ある"
+      ],
+      "forbidden_features": [
+        "円が二重である",
+        "円の外側に四角形の枠がある",
+        "半径の線が3本以上ある"
+      ],
+      "description": "親時計から時刻信号を受けて動く子時計。円と2本の半径で表す。"
+    },
+    {
+      "id": "time_signal_clock",
+      "name": "時報子時計",
+      "category": "電気時計設備",
+      "verified": true,
+      "features": [
+        "正方形の枠がある",
+        "枠に内接する円がある",
+        "円の中心から真上と真右へ半径の線がある"
+      ],
+      "common_mistakes": [
+        "枠を描き忘れて子時計と同じにする",
+        "半径の線を忘れる"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='24' y='24' width='52' height='52'/><circle cx='50' cy='50' r='26'/><line x1='50' y1='50' x2='50' y2='24'/><line x1='50' y1='50' x2='76' y2='50'/></svg>",
+      "required_features": [
+        "正方形の枠が描かれている",
+        "枠に内接する円が1つある",
+        "円の中心から真上と真右へ半径の線が1本ずつある"
+      ],
+      "forbidden_features": [
+        "四角形の枠がない",
+        "円が二重である",
+        "半径の線がない"
+      ],
+      "description": "時報を鳴らす機能を持つ子時計。子時計の円を四角枠で囲んで表す。"
+    },
+    {
+      "id": "master_clock",
+      "name": "親時計",
+      "category": "電気時計設備",
+      "verified": true,
+      "features": [
+        "円が二重に描かれている",
+        "中心から真上へ半径の線が1本ある",
+        "中心から真右へ半径の線が1本ある"
+      ],
+      "common_mistakes": [
+        "一重円にして子時計と混同する",
+        "半径の線を忘れる"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='21'/><line x1='50' y1='50' x2='50' y2='29'/><line x1='50' y1='50' x2='71' y2='50'/></svg>",
+      "required_features": [
+        "円が二重に描かれている",
+        "中心から真上へ向かう半径の線が1本ある",
+        "中心から真右へ向かう半径の線が1本ある"
+      ],
+      "forbidden_features": [
+        "円が一重である",
+        "外側に四角形の枠がある",
+        "半径の線がない"
+      ],
+      "description": "時刻信号を送出する親時計。二重円で子時計と区別する。"
+    },
+    {
+      "id": "horn_speaker",
+      "name": "ホーン型スピーカ",
+      "category": "放送設備",
+      "verified": true,
+      "features": [
+        "左端に小さな四角形がある",
+        "その右に三角形があり頂点が左を向いている",
+        "三角形の垂直な辺は右側にある"
+      ],
+      "common_mistakes": [
+        "円で囲んでスピーカと混同する",
+        "三角形の向きを逆にする"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='20' y='42' width='16' height='16'/><polygon points='36,50 74,28 74,72'/></svg>",
+      "required_features": [
+        "左側に小さな四角形が1つある",
+        "四角形の右に三角形があり、三角形の頂点が左(四角形側)を向いている",
+        "三角形の垂直な辺は画像の右側にある"
+      ],
+      "forbidden_features": [
+        "三角形が円の内部にある",
+        "三角形の頂点が右を向いている",
+        "四角形がない"
+      ],
+      "description": "拡声用のホーン型スピーカ。駆動部の四角形とホーンの三角形で表す。"
+    },
+    {
+      "id": "wireless_antenna",
+      "name": "ワイヤレスアンテナ",
+      "category": "放送設備",
+      "verified": true,
+      "features": [
+        "水平な直線の中央に小さな円がある",
+        "円の左右に直線が伸びている",
+        "縦線や枠はない"
+      ],
+      "common_mistakes": [
+        "テレビ端子と混同して円を線の端に描く",
+        "T字形のアンテナと混同する"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='20' y1='50' x2='43' y2='50'/><circle cx='50' cy='50' r='7'/><line x1='57' y1='50' x2='80' y2='50'/></svg>",
+      "required_features": [
+        "水平な直線の途中(中央)に小さな円が1つある",
+        "小さな円の左右の両側に直線が伸びている",
+        "塗りつぶしがない"
+      ],
+      "forbidden_features": [
+        "円が線の端にあり片側にしか線がない",
+        "円が塗りつぶされている",
+        "全体がT字形である"
+      ],
+      "description": "ワイヤレスマイク用のアンテナ。線の中間に置いた小円で表す。"
+    },
+    {
+      "id": "screen",
+      "name": "スクリーン",
+      "category": "映像設備",
+      "verified": true,
+      "features": [
+        "細長い横長の長方形が1つある",
+        "高さは幅よりずっと小さい",
+        "内部に線や文字がない"
+      ],
+      "common_mistakes": [
+        "正方形に近い形で描いて機器収容箱と混同する",
+        "内部に線を描く"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='14' y='45' width='72' height='12'/></svg>",
+      "required_features": [
+        "横長の長方形が1つ描かれている",
+        "長方形の高さが幅に比べてずっと小さく、細長い",
+        "内部に仕切り線・文字・塗りつぶしがない"
+      ],
+      "forbidden_features": [
+        "内部に仕切り線がある",
+        "正方形に近い形である",
+        "内部が塗りつぶされている"
+      ],
+      "description": "映像を投写するスクリーン。細長い長方形で表す。"
+    },
+    {
+      "id": "speaker_interphone_master",
+      "name": "スピーカー型インターホン親機",
+      "category": "インターホン",
+      "verified": true,
+      "features": [
+        "円が二重に描かれている",
+        "内側の円の中に左向きの三角形がある",
+        "三角形は塗りつぶされていない"
+      ],
+      "common_mistakes": [
+        "一重円で描いてスピーカや子機と混同する",
+        "三角形の向きを逆にする"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='21'/><polygon points='34,50 62,36 62,64'/></svg>",
+      "required_features": [
+        "円が二重に描かれている",
+        "内側の円の中に三角形があり、頂点が左を向いている",
+        "三角形が塗りつぶされていない"
+      ],
+      "forbidden_features": [
+        "円が一重である",
+        "三角形の頂点が右を向いている",
+        "円の中が文字である"
+      ],
+      "description": "スピーカー型インターホンの親機。二重円で子機と区別する。"
+    },
+    {
+      "id": "doorphone",
+      "name": "ドアホン",
+      "category": "インターホン",
+      "verified": true,
+      "features": [
+        "円が1つ描かれている",
+        "円の中に小文字の d がある",
+        "円は一重である"
+      ],
+      "common_mistakes": [
+        "電話型インターホン子機(t)と混同する",
+        "二重円で描く"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='50' cy='50' r='24'/><text x='50' y='60' text-anchor='middle' font-size='27' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>d</text></svg>",
+      "required_features": [
+        "円が1つ描かれている",
+        "円の内部に小文字の d が1文字書かれている",
+        "円は一重である"
+      ],
+      "forbidden_features": [
+        "円が二重である",
+        "円の中の文字が d 以外である",
+        "円の中に図形が描かれている"
+      ],
+      "description": "玄関子機として使うドアホン。円内の d で表す。"
+    },
+    {
+      "id": "doorphone_entrance",
+      "name": "ドアホン集合玄関機",
+      "category": "インターホン",
+      "verified": true,
+      "features": [
+        "横長の長方形の枠がある",
+        "枠の中に小文字の d がある",
+        "円ではなく四角形である"
+      ],
+      "common_mistakes": [
+        "円で描いてドアホンと混同する",
+        "文字を大文字で書く"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><rect x='20' y='36' width='60' height='28'/><text x='50' y='58' text-anchor='middle' font-size='20' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>d</text></svg>",
+      "required_features": [
+        "横長の長方形の枠が描かれている",
+        "枠の内部に小文字の d が1文字書かれている"
+      ],
+      "forbidden_features": [
+        "外形が円である",
+        "枠の中の文字が d 以外である",
+        "枠が二重である"
+      ],
+      "description": "集合住宅の玄関に設ける集合玄関機。四角枠内の d で表す。"
+    },
+    {
+      "id": "tap_off_2",
+      "name": "2分岐器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "幹線が円を貫通して左右に伸びている",
+        "円から上下に分岐線が1本ずつ出ている",
+        "円に接続する線は合計4本"
+      ],
+      "common_mistakes": [
+        "2分配器と混同して幹線を片側だけにする",
+        "分岐線の本数を間違える"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='10' y1='50' x2='90' y2='50'/><circle cx='50' cy='50' r='13'/><line x1='50' y1='37' x2='50' y2='18'/><line x1='50' y1='63' x2='50' y2='82'/></svg>",
+      "required_features": [
+        "1本の直線(幹線)が円を貫通し、円の左右両側に伸びている",
+        "円から幹線と直角方向に、上方向と下方向へ分岐線が1本ずつ出ている",
+        "分岐線は合計2本である"
+      ],
+      "forbidden_features": [
+        "幹線が円の片側にしか伸びていない",
+        "分岐線が1本だけである",
+        "分岐線が合計3本以上ある"
+      ],
+      "description": "幹線から2回路を分岐する器具。幹線が貫通する点で分配器と区別する。"
+    },
+    {
+      "id": "tap_off_4",
+      "name": "4分岐器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "幹線が円を貫通して左右に伸びている",
+        "円から上に2本、下に2本の分岐線が出ている",
+        "分岐線は合計4本"
+      ],
+      "common_mistakes": [
+        "4分配器と混同して幹線を片側だけにする",
+        "分岐線を上下1本ずつにして2分岐器にしてしまう"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='10' y1='50' x2='90' y2='50'/><circle cx='50' cy='50' r='13'/><line x1='44' y1='38' x2='44' y2='18'/><line x1='56' y1='38' x2='56' y2='18'/><line x1='44' y1='62' x2='44' y2='82'/><line x1='56' y1='62' x2='56' y2='82'/></svg>",
+      "required_features": [
+        "1本の直線(幹線)が円を貫通し、円の左右両側に伸びている",
+        "円から上方向へ分岐線が2本出ている",
+        "円から下方向へ分岐線が2本出ている"
+      ],
+      "forbidden_features": [
+        "幹線が円の片側にしか伸びていない",
+        "分岐線が上下に1本ずつしかない",
+        "分岐線が合計4本でない"
+      ],
+      "description": "幹線から4回路を分岐する器具。上下2本ずつの分岐線で表す。"
+    },
+    {
+      "id": "distributor_4way",
+      "name": "4分配器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "円の片側にだけ入力線がある",
+        "円から上に2本、下に2本の出力線が出ている",
+        "出力線は合計4本"
+      ],
+      "common_mistakes": [
+        "4分岐器と混同して水平線を貫通させる",
+        "出力線の本数を間違える"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='52' cy='50' r='13'/><line x1='18' y1='50' x2='39' y2='50'/><line x1='46' y1='38' x2='46' y2='18'/><line x1='58' y1='38' x2='58' y2='18'/><line x1='46' y1='62' x2='46' y2='82'/><line x1='58' y1='62' x2='58' y2='82'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の片側にだけ水平の入力線が1本接続されている",
+        "円から上方向へ2本、下方向へ2本の出力線が出ている"
+      ],
+      "forbidden_features": [
+        "水平線が円を貫通して左右両側に伸びている",
+        "出力線が上下に1本ずつしかない",
+        "出力線が合計4本でない"
+      ],
+      "description": "入力を4回路に等分配する器具。入力が片側だけである点で分岐器と区別する。"
+    },
+    {
+      "id": "distributor_6way",
+      "name": "6分配器",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "円の片側にだけ入力線がある",
+        "円から上に3本、下に3本の出力線が出ている",
+        "出力線は合計6本"
+      ],
+      "common_mistakes": [
+        "4分配器と本数を混同する",
+        "水平線を貫通させて分岐器にしてしまう"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><circle cx='52' cy='50' r='13'/><line x1='18' y1='50' x2='39' y2='50'/><line x1='44' y1='40' x2='44' y2='18'/><line x1='52' y1='37' x2='52' y2='18'/><line x1='60' y1='40' x2='60' y2='18'/><line x1='44' y1='60' x2='44' y2='82'/><line x1='52' y1='63' x2='52' y2='82'/><line x1='60' y1='60' x2='60' y2='82'/></svg>",
+      "required_features": [
+        "円が描かれている",
+        "円の片側にだけ水平の入力線が1本接続されている",
+        "円から上方向へ3本、下方向へ3本の出力線が出ている"
+      ],
+      "forbidden_features": [
+        "水平線が円を貫通して左右両側に伸びている",
+        "出力線が上下に2本ずつである",
+        "出力線が合計6本でない"
+      ],
+      "description": "入力を6回路に等分配する器具。上下3本ずつの出力線で表す。"
+    },
+    {
+      "id": "head_end",
+      "name": "ヘッドエンド",
+      "category": "テレビ共聴",
+      "verified": true,
+      "features": [
+        "円が1つ描かれている",
+        "円の中に下向きの三角形(▽)がある",
+        "三角形の上辺の中央から下の頂点へ縦線がある"
+      ],
+      "common_mistakes": [
+        "三角形の向きを逆にする",
+        "内部の縦線を描き忘れる"
+      ],
+      "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linejoin='round'><circle cx='50' cy='50' r='26'/><polygon points='28,38 72,38 50,74'/><line x1='50' y1='38' x2='50' y2='74'/></svg>",
+      "required_features": [
+        "円が1つ描かれている",
+        "円の内部に下向きの三角形(▽)がある",
+        "三角形の上辺の中央から下の頂点へ向かう縦線が1本ある"
+      ],
+      "forbidden_features": [
+        "三角形が上向き(△)である",
+        "三角形の内部の縦線がない",
+        "三角形が塗りつぶされている"
+      ],
+      "description": "共聴システムの信号処理を集約する装置。円内の▽と縦線で表す。"
     }
   ],
   "_disclaimer": "本ルーブリックは練習支援用。AI判定は図記号としての正しさを保証しない。正式にはJIS C 0303規格票を確認のこと。"
