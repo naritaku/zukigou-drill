@@ -230,20 +230,26 @@ GitHub Actions が Google Cloud に認証するための準備。
      --data-file=- <<< "paid-key"
    ```
 
-4. **ランタイム SA にシークレットの参照権を付与**
+4. **専用ランタイム SA を作り、シークレットの参照権を付与**
 
-   シークレットを読むのは Cloud Run の**ランタイム SA**（既定では
-   `{PROJECT_NUMBER}-compute@developer.gserviceaccount.com`）。使うシークレットごとに
-   権限が必要で、無いとリビジョン作成が `Permission denied on secret` で失敗する。
+   GCP の既定では Cloud Run は compute SA で動き、その SA は **`roles/editor`**
+   （プロジェクトのほぼ全権）を持つ。アプリが必要なのは Firestore・ログ出力・
+   シークレット参照だけなので、専用 SA に絞る。ワークフローは
+   `--service-account zukigou-drill-run@...` で明示的にこの SA を指定する。
+
+   シークレットを読むのはランタイム SA なので、使うシークレットごとに
+   `secretAccessor` が必要（無いとリビジョン作成が `Permission denied on secret`
+   で失敗する。ビルドは通るため最後まで気付きにくい）。
 
    ```bash
-   for secret in GEMINI_API_KEY GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
-     gcloud secrets add-iam-policy-binding $secret \
-       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-       --role=roles/secretmanager.secretAccessor \
-       --project="$PROJECT_ID"
-   done
+   bash scripts/setup-gcp-guardrails.sh runtime-sa   # SA 作成 + 最小ロール + actAs
+   bash scripts/setup-gcp-guardrails.sh secrets      # シークレットごとの参照権
+   bash scripts/setup-gcp-guardrails.sh verify       # 付与状況と実効ロールを確認
    ```
+
+   付与するロールは Firestore 用の `roles/datastore.user` とログ用の
+   `roles/logging.logWriter` のみ。GCS 保存を有効にする場合は、対象バケットに
+   `roles/storage.objectCreator` を**バケット単位で**追加する。
 
    > **注**: シークレットは環境変数への値コピーではなく `--set-secrets` でマウントする。
    > ワークフローは Secret Manager に**存在するものだけ**を渡すため、未作成のキーを
