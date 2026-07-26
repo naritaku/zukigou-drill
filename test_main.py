@@ -69,6 +69,48 @@ class ImageValidationTest(unittest.TestCase):
             main.MAX_IMAGE_PIXELS = original_limit
         self.assertEqual(ctx.exception.status_code, 413)
 
+    def test_decode_png_rejects_oversized_base64_string(self):
+        """base64 文字列長が上限超過なら、デコード前に 413 で弾く（コスト保護）"""
+        original = main.MAX_IMAGE_B64_CHARS
+        try:
+            main.MAX_IMAGE_B64_CHARS = 10
+            with self.assertRaises(HTTPException) as ctx:
+                main._decode_png(inked_png_b64())  # 10 文字を超える
+        finally:
+            main.MAX_IMAGE_B64_CHARS = original
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_decode_png_rejects_empty_image(self):
+        """空 base64（デコード結果が空）は 400"""
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png("")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_decode_png_rejects_oversized_bytes(self):
+        """デコード後のバイト数が上限超過なら、PNG 検証前に 413（外部呼び出し前の門番）"""
+        original = main.MAX_IMAGE_BYTES
+        try:
+            main.MAX_IMAGE_BYTES = 10
+            with self.assertRaises(HTTPException) as ctx:
+                main._decode_png(png_b64(Image.new("RGB", (64, 64), "white")))
+        finally:
+            main.MAX_IMAGE_BYTES = original
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_decode_png_rejects_invalid_base64(self):
+        """base64 として不正な文字列は 400"""
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png("data:image/png;base64,@@@not-base64@@@")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_decode_png_rejects_non_png_magic(self):
+        """PNG マジックで始まらないバイト列は 400（PIL に渡す前に拒否）"""
+        not_png = base64.b64encode(b"this is definitely not a png file").decode("ascii")
+        with self.assertRaises(HTTPException) as ctx:
+            main._decode_png(not_png)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "PNG image required")
+
 
 class JudgeEndpointTest(unittest.TestCase):
     def setUp(self):
@@ -112,6 +154,41 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertTrue(body["passed"])
         self.assertEqual(body["score"], f"{len(body['checks'])}/{len(body['checks'])}")
         fake_client.models.generate_content.assert_called_once()
+
+    def test_judge_failed_when_required_feature_missing(self):
+        """必須特徴が欠けていれば passed=false・mistakes に不足理由が入る（不合格フィードバックの核心）"""
+        required = self.symbol.get("required_features", self.symbol["features"])
+        forbidden = self.symbol.get("forbidden_features", [])
+        confusions = self.symbol.get("confusable_symbols", [])
+        # 先頭の必須特徴だけ False（欠落）にする
+        required_flags = [i != 0 for i in range(len(required))]
+        response_text = json.dumps(
+            {
+                "required": required_flags,
+                "forbidden": [False for _ in forbidden],
+                "confusions": [False for _ in confusions],
+                "observation": "一部の特徴が見当たらない",
+            },
+            ensure_ascii=False,
+        )
+        fake_client = Mock()
+        fake_client.models.generate_content.return_value.text = response_text
+
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key")]), \
+            patch.object(main, "_get_genai_client", return_value=fake_client):
+            res = self.client.post(
+                "/api/judge",
+                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64()},
+            )
+
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertFalse(body["passed"])
+        # 不足した必須特徴が mistakes に「必須特徴が不足: ...」として現れる
+        self.assertTrue(any(m.startswith("必須特徴が不足:") for m in body["mistakes"]))
+        # score は 合格数 < 総数
+        n_ok, n_total = map(int, body["score"].split("/"))
+        self.assertLess(n_ok, n_total)
 
     def test_judge_falls_back_models_before_paid_key(self):
         required = self.symbol.get("required_features", self.symbol["features"])
@@ -1077,6 +1154,11 @@ class ReadyzTest(unittest.TestCase):
             res = self.client.get("/readyz")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["keys_available"], 1)
+
+    def test_readyz_503_when_no_symbols_loaded(self):
+        with patch.object(main, "SYMBOLS", {}):
+            res = self.client.get("/readyz")
+        self.assertEqual(res.status_code, 503)
 
     def test_readyz_503_when_all_keys_rate_limited(self):
         main._mark_rate_limited("free-key")
