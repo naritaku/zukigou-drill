@@ -100,5 +100,7 @@ jobs:
             --region "$REGION" \
             --format='value(status.url)')"
           echo "Service deployed at: $SERVICE_URL"
-          curl -fsS "$SERVICE_URL/healthz" && echo "✓ /healthz OK"
+          # /healthz は Google のフロントエンドが握っていてコンテナに届かず 404 になる
+          # （FastAPI ではなく Google の HTML エラーページが返る）。疎通確認は
+          # 記録も Gemini キーも見る /readyz で行う。
           curl -fsS "$SERVICE_URL/readyz" && echo "✓ /readyz OK"

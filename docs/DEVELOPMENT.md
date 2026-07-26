@@ -150,15 +150,57 @@ LOGLEVEL=DEBUG python -m unittest discover -v
 
 GitHub Actions が Google Cloud に認証するための準備。
 
-1. **Google Cloud 側の設定**（[deploy_memo/gcp-setup.md](../deploy_memo/gcp-setup.md) を参照）
-   - Secret Manager 初期化
-   - Workload Identity Federation 設定
+1. **Workload Identity Federation**（サービスアカウントキーを持たずに GitHub から認証する）
 
-2. **GitHub リポジトリ Settings → Secrets and variables → Actions → Variables** に登録：
+   プール・プロバイダ・サービスアカウントのいずれかが実在しないと、
+   `google-github-actions/auth` が `invalid_target` で失敗する。
 
-   ```text
-   GCP_WORKLOAD_IDENTITY_PROVIDER=projects/123456789/locations/global/workloadIdentityPools/github/providers/github-repo
-   GCP_SERVICE_ACCOUNT=github-actions-deployer@zukigou-drill-dojo.iam.gserviceaccount.com
+   ```bash
+   PROJECT_ID=zukigou-drill-dojo
+   PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+   REPO=naritaku/zukigou-drill
+   SA="github-actions-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+   # デプロイ用サービスアカウント
+   gcloud iam service-accounts create github-actions-deployer \
+     --project "$PROJECT_ID" --display-name "GitHub Actions deployer"
+
+   # 必要ロール（run.admin: サービス更新 / cloudbuild・storage・artifactregistry:
+   # --source デプロイのビルドと push / secretmanager.viewer: シークレット存在確認
+   # / logging.viewer: ビルドログ取得）
+   for ROLE in roles/run.admin roles/cloudbuild.builds.editor roles/storage.admin \
+               roles/artifactregistry.writer roles/secretmanager.viewer roles/logging.viewer; do
+     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+       --member "serviceAccount:${SA}" --role "$ROLE" --condition=None
+   done
+
+   # ランタイム SA として Cloud Run を動かす権限（actAs）
+   gcloud iam service-accounts add-iam-policy-binding \
+     "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+     --project "$PROJECT_ID" \
+     --member "serviceAccount:${SA}" --role roles/iam.serviceAccountUser
+
+   # プールとプロバイダ（このリポジトリからの認証のみ許可）
+   gcloud iam workload-identity-pools create github \
+     --project "$PROJECT_ID" --location global --display-name "GitHub Actions"
+   gcloud iam workload-identity-pools providers create-oidc github-repo \
+     --project "$PROJECT_ID" --location global --workload-identity-pool github \
+     --display-name "GitHub repo" \
+     --issuer-uri "https://token.actions.githubusercontent.com" \
+     --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository" \
+     --attribute-condition "assertion.repository=='${REPO}'"
+   gcloud iam service-accounts add-iam-policy-binding "$SA" \
+     --project "$PROJECT_ID" --role roles/iam.workloadIdentityUser \
+     --member "principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}"
+   ```
+
+2. **GitHub リポジトリ Settings → Secrets and variables → Actions → Variables** に登録
+   （上で作ったリソース名と一致させる）：
+
+   ```bash
+   gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER \
+     --body "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/github-repo"
+   gh variable set GCP_SERVICE_ACCOUNT --body "$SA"
    ```
 
 3. **Gemini API キーを Secret Manager に登録**
@@ -188,40 +230,51 @@ GitHub Actions が Google Cloud に認証するための準備。
      --data-file=- <<< "paid-key"
    ```
 
-4. **Cloud Run サービスアカウントに IAM 権限を付与**
+4. **ランタイム SA にシークレットの参照権を付与**
+
+   シークレットを読むのは Cloud Run の**ランタイム SA**（既定では
+   `{PROJECT_NUMBER}-compute@developer.gserviceaccount.com`）。使うシークレットごとに
+   権限が必要で、無いとリビジョン作成が `Permission denied on secret` で失敗する。
 
    ```bash
-   # サービスアカウント取得
-   SA="cloud-run-service-account@YOUR_PROJECT.iam.gserviceaccount.com"
-
-   # 各 Secret に対して Secret Accessor 権限を付与
    for secret in GEMINI_API_KEY GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
      gcloud secrets add-iam-policy-binding $secret \
-       --member=serviceAccount:${SA} \
+       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
        --role=roles/secretmanager.secretAccessor \
-       --project=YOUR_PROJECT
+       --project="$PROJECT_ID"
    done
    ```
 
-5. **Cloud Run にシークレットをマウント**
-
-   Cloud Run サービス更新時に環境変数として参照：
-   ```bash
-   gcloud run services update zukigou-drill \
-     --set-env-vars GEMINI_API_KEY=GEMINI_API_KEY,GEMINI_API_KEYS=GEMINI_API_KEYS,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY \
-     --project=YOUR_PROJECT \
-     --region=asia-northeast1
-   ```
-
-   > **注**: 値は Secret Manager からの参照（環境変数名で指定）ではなく、runtime に Secret Manager から値をロード
+   > **注**: シークレットは環境変数への値コピーではなく `--set-secrets` でマウントする。
+   > ワークフローは Secret Manager に**存在するものだけ**を渡すため、未作成のキーを
+   > 気にせず実行できる。
 
 ### 手動デプロイ
 
-GitHub の **Actions → Deploy Cloud Run → Run workflow** を実行
+GitHub の **Actions → Deploy Cloud Run → Run workflow** を実行（`main` のみ）。
 
-パラメータ：
-- `gemini_model`: デプロイ先で使用するモデル（既定: `gemini-2.5-flash`）
-- `max_instances`: Cloud Run の最大インスタンス数（既定: 1）
+パラメータ（既定値）：
+- `gemini_models_free` / `gemini_models_paid`: 試行するモデルの順序
+  （既定: `gemini-3.1-flash-lite,gemini-3.5-flash`）
+- `max_instances`: Cloud Run の最大インスタンス数（既定: `2`）
+- `rate_limit` / `rate_window`: IP あたりのレート制限（既定: 20 回 / 60 秒）
+- `all_judgments_bucket` / `feedback_bucket`: 空ならデータ保存は無効
+
+### ローカルからのデプロイ
+
+CI が使えないときはワークフローと同じ内容を手元から実行できる。`--set-env-vars` と
+`--set-secrets` は**指定した集合で置き換わる**ので、必要な値はすべて書く。
+
+```bash
+gcloud run deploy zukigou-drill --source . \
+  --project zukigou-drill-dojo --region asia-northeast1 \
+  --allow-unauthenticated --max-instances 2 \
+  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest" \
+  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60"
+
+# 疎通確認（/healthz は Google のフロントエンドが握るため 404 になる。/readyz を見る）
+curl -fsS https://zukigou-drill-vnoxzmytga-an.a.run.app/readyz
+```
 
 ### カスタムドメイン設定
 
