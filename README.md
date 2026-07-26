@@ -6,13 +6,22 @@
 
 Google AI Dojo Season 2 提出作品
 
-<p align="center">
-  <img src="docs/demo.gif" alt="指で記号を描いて判定するまでのデモ" width="320">
-</p>
+<table>
+  <tr>
+    <td align="center"><b>合格</b>（ジョイントボックス）</td>
+    <td align="center"><b>不合格</b>（端子盤 — 中央の水平線を描き忘れ）</td>
+  </tr>
+  <tr>
+    <td><img src="docs/demo.gif" alt="正しく描いて合格するデモ" width="300"></td>
+    <td><img src="docs/demo-fail.gif" alt="必須特徴が不足して不合格になるデモ" width="300"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>6/6 で合格。判定後に名称と用途が出る</sub></td>
+    <td align="center"><sub>4/5 で不合格。<b>どの必須特徴が足りないか</b>を名指しで返す</sub></td>
+  </tr>
+</table>
 
-<p align="center">
-  <sub>記号を描く → 判定 → 合否・不足特徴・名称と用途が返る（本番環境の実録）</sub>
-</p>
+<sub>いずれも本番環境（Cloud Run）を実際に操作した録画。判定も実際の Gemini 呼び出し。</sub>
 
 ---
 
