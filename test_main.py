@@ -1196,6 +1196,11 @@ class EndpointSmokeTest(unittest.TestCase):
         self.assertIn(body["id"], main.SYMBOLS)
         self.assertTrue(main.SYMBOLS[body["id"]]["verified"])
 
+    def test_question_includes_description(self):
+        """判定後の解説表示に使うため、出題レスポンスに description を含める。"""
+        body = self.client.get("/api/question").json()
+        self.assertEqual(body["description"], main.SYMBOLS[body["id"]]["description"])
+
     def test_healthz(self):
         self.assertEqual(self.client.get("/healthz").json(), {"ok": True})
 

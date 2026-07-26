@@ -109,6 +109,17 @@
   .check.ng .mark { color: var(--ng); }
   .check span:last-child { font-size: 13px; line-height: 1.65; padding-top: 1px; }
   .mistake { font-size: 12.5px; color: var(--ng); padding: 10px 14px 0; }
+  /* 判定後に出す記号の解説。第二次検定では記号から名称と用途を答えるため、
+     解答とお手本の図の直上に置いて、図・名称・説明を一目で結び付ける。 */
+  .symbol-desc {
+    font-size: 12.5px; line-height: 1.75; color: var(--on-surface);
+    background: var(--surface-variant, #eef2fa);
+    border-left: 3px solid var(--primary, #003e89);
+    border-radius: 2px;
+    margin: 12px 12px 0; padding: 10px 12px;
+  }
+  .symbol-desc:empty { display: none; }
+  .symbol-desc b { color: var(--primary, #003e89); }
   .obs {
     display: flex; gap: 6px; align-items: flex-start;
     font-size: 11.5px; color: var(--on-surface-variant);
@@ -181,6 +192,7 @@
 
 <section class="report card" id="report">
   <div class="rhead"><b>AIチェック結果</b><span class="verdict" id="verdict"></span><span class="score" id="score"></span></div>
+  <p class="symbol-desc" id="symbolDesc"></p>
   <div class="compare" id="compare" style="display:none">
     <figure>
       <figcaption><span class="label-caps">あなたの解答</span></figcaption>
@@ -439,6 +451,13 @@ function render(r) {
     row.className = "mistake";
     row.textContent = `⚠ ${message}`;
     mistakes.append(row);
+  }
+  const desc = $("symbolDesc");
+  desc.replaceChildren();
+  if (q && q.description) {
+    const label = document.createElement("b");
+    label.textContent = q.name + "：";
+    desc.append(label, document.createTextNode(q.description));
   }
   $("obs").textContent = "観察: " + r.observation;
   document.body.classList.add("reviewed");
