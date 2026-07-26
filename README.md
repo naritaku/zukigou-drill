@@ -6,6 +6,23 @@
 
 Google AI Dojo Season 2 提出作品
 
+<table>
+  <tr>
+    <td align="center"><b>合格</b>（ジョイントボックス）</td>
+    <td align="center"><b>不合格</b>（端子盤 — 中央の水平線を描き忘れ）</td>
+  </tr>
+  <tr>
+    <td><img src="docs/demo.gif" alt="正しく描いて合格するデモ" width="300"></td>
+    <td><img src="docs/demo-fail.gif" alt="必須特徴が不足して不合格になるデモ" width="300"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>6/6 で合格。判定後に名称と用途が出る</sub></td>
+    <td align="center"><sub>4/5 で不合格。<b>どの必須特徴が足りないか</b>を名指しで返す</sub></td>
+  </tr>
+</table>
+
+<sub>いずれも本番環境（Cloud Run）を実際に操作した録画。判定も実際の Gemini 呼び出し。</sub>
+
 ---
 
 ## 🎯 特徴
@@ -14,9 +31,9 @@ Google AI Dojo Season 2 提出作品
 
 従来の LLM 判定のみでは判定がぶれる。本アプリは：
 
-1. **ルーブリック定義**: 記号ごとに必須特徴・禁止特徴・類似記号を `symbols.json` で定義
+1. **ルーブリック定義**: 記号ごとに必須特徴・禁止特徴を `symbols.json` で定義
 2. **AI の観察**: Gemini vision が各特徴を**独立した true/false で観察**（JSON Schema 固定・temperature 0）
-3. **確定的な採点**: 必須特徴がすべて満たされ、禁止特徴・類似記号がすべて false の場合のみ合格
+3. **確定的な採点**: 必須特徴がすべて true、禁止特徴がすべて false の場合のみ合格
 
 → 不合格時に「どの特徴が不足しているか」が構造的に分かる
 
@@ -33,16 +50,16 @@ Google AI Dojo Season 2 提出作品
 ![architecture](docs/architecture.svg)
 
 ```
-[ブラウザ] landing.html / drill.html (canvas 指描き)
-     │  → PNG 正規化・トリミング
+[ブラウザ] landing.html / drill.html / standards.html (canvas 指描き)
+     │  → PNG 正規化・トリミング・512px 化
      ▼
-[Cloud Run] FastAPI
-     │  ルーブリック + Gemini vision
+[Cloud Run] FastAPI ── [Secret Manager]  API キー（無料 → 有料）
+     │  検証 + ルーブリック          └─ [Firestore] レート制限のバックオフを永続化
      ▼
 [Gemini 3.1 Flash Lite]
      │  各特徴を true/false で観察
      ▼
-[決定的採点]
+[決定的採点] ─ ─ ─ ▶ [Cloud Storage] 判定ログ（任意・既定は無効）
 ```
 
 ---
@@ -90,11 +107,21 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 
 ## 📊 収録範囲
 
-電気通信工事施工管理技士 第二次検定の出題実績に基づく 5 カテゴリ：
+電気通信工事施工管理技士 第二次検定の設備系統図に頻出の **9 カテゴリ・全 54 記号**：
 
-- 電話設備 / インターホン / テレビ共聴 / LAN 情報 / 放送設備
+| カテゴリ | 記号数 |
+|---|---|
+| テレビ共聴 | 13 |
+| 共通・配線材料 | 10 |
+| 電話設備 | 7 |
+| 警報・呼出・表示 | 7 |
+| インターホン | 5 |
+| 放送設備 | 4 |
+| LAN・情報設備 | 4 |
+| 電気時計設備 | 3 |
+| 映像設備 | 1 |
 
-各記号は JIS C 0303:2000 規格票で検証済み
+各記号は JIS C 0303:2000 規格票と照合済み。最新の一覧は [/standards](https://zukigou-drill-vnoxzmytga-an.a.run.app/standards) で確認できる。
 
 ---
 

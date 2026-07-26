@@ -51,16 +51,32 @@ Cloud Run の scale to zero がそのまま成立する。
 
 **応答**: HTML
 
+### GET /standards
+
+図記号一覧（解説ページ）。カテゴリごとにお手本 SVG・説明・判定ポイントを表示する。
+
+**応答**: HTML
+
+### GET /api/catalog
+
+解説ページ用。`verified: true` の全記号について、お手本 SVG・説明・`required_features`・
+`common_mistakes` を返す。
+
+### GET /api/symbols
+
+収録記号の一覧（`id` / `name` / `category` / `verified`）。`verified: false` も含む。
+
 ### GET /api/question
 
-出題 API。`verified: true` のランダムな記号を返す。
+出題 API。`verified: true` のランダムな記号を返す。`description` は判定後の解説表示に使う。
 
 **応答**:
 ```json
 {
-  "id": "tel-handset",
+  "id": "kanyu_phone",
   "name": "加入電話機",
-  "category": "電話設備"
+  "category": "電話設備",
+  "description": "電気通信事業者の回線に直接接続する電話機。..."
 }
 ```
 
@@ -71,7 +87,7 @@ Cloud Run の scale to zero がそのまま成立する。
 **リクエスト**:
 ```json
 {
-  "symbol_id": "tel-handset",
+  "symbol_id": "kanyu_phone",
   "image_b64": "data:image/png;base64,iVBOR..."
 }
 ```
@@ -79,13 +95,13 @@ Cloud Run の scale to zero がそのまま成立する。
 **レスポンス（200 OK）**:
 ```json
 {
-  "symbol_id": "tel-handset",
+  "symbol_id": "kanyu_phone",
   "passed": true,
   "score": "3/3",
   "checks": [
-    { "feature": "必須: 二重円がある", "ok": true },
-    { "feature": "除外: 単一円がない", "ok": true },
-    { "feature": "識別: 加入電話機の決定的特徴ではない", "ok": true }
+    { "feature": "必須: 二重の円が描かれている", "ok": true },
+    { "feature": "必須: 円の中に T の文字がある", "ok": true },
+    { "feature": "除外: 円が一重であるがない", "ok": true }
   ],
   "mistakes": [],
   "observation": "二重円が見られる。内側にフック形状あり。",
@@ -126,6 +142,12 @@ Cloud Run の scale to zero がそのまま成立する。
 `/api/*` のエラーは常に JSON で返る（HTML の 404 ページは通常ページのみ）。
 429 に `Retry-After` ヘッダは付かない。
 
+### POST /api/report
+
+異議報告 API。「判定に納得できない」を押したときだけ呼ばれる。`FEEDBACK_BUCKET` が
+設定されている場合のみ、画像と判定結果を匿名で GCS に保存する（未設定なら保存せず
+`{"ok": true}` を返す）。リクエストは `symbol_id` / `image_b64` / `judgment`。
+
 ### GET /healthz
 
 プロセス生存確認。常に 200 OK。
@@ -134,6 +156,10 @@ Cloud Run の scale to zero がそのまま成立する。
 { "ok": true }
 ```
 
+> **注**: Cloud Run 上ではこのパスに Google のフロントエンドが応答し、コンテナまで
+> 届かず 404（Google の HTML エラーページ）になる。デプロイ後の疎通確認には
+> `/readyz` を使う。ローカル実行では通常どおり 200 が返る。
+
 ### GET /readyz
 
 準備状態確認。
@@ -141,7 +167,7 @@ Cloud Run の scale to zero がそのまま成立する。
 ```json
 {
   "ok": true,
-  "symbols": 26,
+  "symbols": 54,
   "feedback_enabled": false,
   "keys_available": 2,
   "keys_total": 3
@@ -173,43 +199,37 @@ Cloud Run の scale to zero がそのまま成立する。
 ```python
 symbol = symbols[symbol_id]  # symbols.json から読み込み
 rubric = {
-  "required_features": symbol["required_features"],  # 必須特徴（全て true 必須）
+  "required_features": symbol["required_features"],   # 必須特徴（全て true 必須）
   "forbidden_features": symbol["forbidden_features"],  # 禁止特徴（全て false 必須）
-  "confusable_symbols": symbol["confusable_symbols"]  # 類似記号判定
 }
 ```
+
+類似記号との弁別は、専用フィールドではなく各記号の `forbidden_features` に
+判別条件として書き下す（例: 分配器なら「水平線が円を貫通して左右両側に伸びている」）。
 
 ### 3. Gemini vision 呼び出し
 
-**JSON Schema 強制**で各項目を独立判定：
+**JSON Schema 強制**（`response_schema=VisionResult`）で各項目を独立判定する。
+特徴は番号順の boolean 配列で受け取るため、記号ごとに項目数が変わってもスキーマは同じ：
 
-```json
-{
-  "type": "object",
-  "properties": {
-    "double_circle": { "type": "boolean" },
-    "hook_shape": { "type": "boolean" },
-    "no_fill": { "type": "boolean" },
-    "similar_single_circle": { "type": "boolean" }
-  },
-  "required": ["double_circle", "hook_shape", "no_fill", "similar_single_circle"]
-}
+```python
+class VisionResult(BaseModel):
+    model_config = ConfigDict(strict=True)
+    required: list[bool]    # required_features と同じ順序
+    forbidden: list[bool]   # forbidden_features と同じ順序
+    observation: str        # 日本語の根拠（最大 500 文字。超過分は切り詰め）
 ```
 
-**プロンプト例**:
+**プロンプトの構造**（`main.py` の `judge` を参照）:
 ```
-画像を見て、以下の項目を true/false で答えてください：
+必須特徴(required): 画像に存在すれば true
+{ "0": "二重の円が描かれている", "1": "円の中に T の文字がある" }
 
-required_features:
-1. 二重円がある: true/false
-2. フック形状がある: true/false
-3. 塗りつぶしがない: true/false
+禁止特徴(forbidden): 画像に存在すれば true。1つでも true なら不合格
+{ "0": "円が一重である", "1": "円の中が塗りつぶされている" }
 
-forbidden_features:
-4. 単一円である: true/false
-
-confusable_symbols:
-5. 単一円（類似記号の特徴）が見えるか: true/false
+→ required / forbidden は、上記の番号(0,1,2...)に対応する true/false を
+   その順序どおりに並べた配列で返す
 ```
 
 ### 4. 採点ロジック
@@ -235,8 +255,8 @@ def judge(image_b64, symbol_id):
       except Exception:
         continue                      # 次のモデルへ
   
-  # 4. 採点決定（必須がすべて true、禁止・類似がすべて false なら合格）
-  checks = build_checks(observation, required, forbidden, confusable)
+  # 4. 採点決定（必須がすべて true、禁止がすべて false なら合格）
+  checks = build_checks(observation, required, forbidden)
   passed = all(c["ok"] for c in checks)
   score  = f"{sum(c['ok'] for c in checks)}/{len(checks)}"   # 例: "7/8"
 
@@ -322,7 +342,7 @@ Firestore 参照はレート制限判定のたびに 1 回で、低トラフィ�
 
 ```
 {
-  "symbol_id": "tel-handset",
+  "symbol_id": "kanyu_phone",
   "passed": true,
   "score": 0.95,
   "checks": {...},
@@ -416,10 +436,21 @@ Firestore 参照はレート制限判定のたびに 1 回で、低トラフィ�
 - **GCS ライフサイクル**: 古いデータの自動削除（保存を有効にした場合のみ）
 
 **想定コスト**:
-- Gemini API: ~$0.50-1/月（無料枠メイン）
-- Cloud Run: ~$0.10/月（scale to zero）
-- Cloud Storage: $0（既定では保存無効。有効時も無料枠内の見込み）
-- **合計: $0.60-1.10/月**
+
+1 判定あたりの入力は実測 1,510〜1,641 トークン（本文 421〜552 + 画像 1,090 固定）、
+出力は約 40 トークン。有料枠の単価（入力 $0.25 / 出力 $1.50 per 1M）で換算すると
+**1 判定 ≈ $0.0005** で、判定数に完全に比例する。
+
+| | 1 日 100 判定 | 1 日 1,000 判定 |
+|---|---|---|
+| Gemini | $1.38 | $13.80 |
+| Cloud Run（scale to zero） | $0.03 | $0.31 |
+| Cloud Storage（任意・既定は無効） | $0.03 | $0.30 |
+| Firestore（レート制限のみ・無料枠内） | $0 | $0 |
+| **合計** | **≈ $1.4 / 月** | **≈ $14.4 / 月** |
+
+無料枠のキーで運用している間は実質 $0。画像は解像度を落としてもトークン数が
+変わらない（1,090 固定）ため、コスト削減には効かない。
 
 ---
 
