@@ -55,9 +55,7 @@
         "弧(曲線)が描かれている",
         "水平線の中央から垂直な線が上方向へ伸び、上下反転している"
       ],
-      "confusable_symbols": [
-        "パラボラアンテナ"
-      ],
+      "confusable_symbols": [],
       "description": "地上波テレビ放送を受信するアンテナ。種類を示す場合はVHF・UHFや素子数を傍記する。"
     },
     {
@@ -85,9 +83,7 @@
         "四角形が4辺で完全に閉じている",
         "弧が画像の右側に開いている、または四角形が弧の左側にあり左右反転している"
       ],
-      "confusable_symbols": [
-        "テレビジョンアンテナ"
-      ],
+      "confusable_symbols": [],
       "description": "BS・CSなどの衛星放送を受信する反射鏡付きアンテナ。種類はBS、CSを傍記する。"
     },
     {
@@ -114,10 +110,7 @@
         "三角形が円の外側に描かれている",
         "画像の左右の線の本数が逆(左1本・右2本)で、左右反転している"
       ],
-      "confusable_symbols": [
-        "1分岐器",
-        "2分配器"
-      ],
+      "confusable_symbols": [],
       "description": "複数帯域の受信信号を1本にまとめる(混合)、または帯域ごとに分ける(分波)機器。アンテナ直下などに設ける。"
     },
     {
@@ -145,10 +138,7 @@
         "円に斜めの矢印が重なっている",
         "三角形が塗りつぶされている"
       ],
-      "confusable_symbols": [
-        "アッテネータ",
-        "スピーカ"
-      ],
+      "confusable_symbols": [],
       "description": "伝送で減衰した信号レベルを増幅する機器。テレビ共聴の幹線系に設けブースタとも呼ぶ。"
     },
     {
@@ -175,10 +165,7 @@
         "分岐線が2本以上ある",
         "円の中心に塗りつぶした点がある"
       ],
-      "confusable_symbols": [
-        "2分配器",
-        "混合・分波器"
-      ],
+      "confusable_symbols": [],
       "description": "幹線から信号の一部を取り出して分岐する機器。幹線はこの先へ続く。分岐数により1・2・4分岐器がある。"
     },
     {
@@ -206,10 +193,7 @@
         "出力線が1本しかない",
         "上下どちらか一方だけに2本が偏り、上下対称の2出力に見えない"
       ],
-      "confusable_symbols": [
-        "1分岐器",
-        "混合・分波器"
-      ],
+      "confusable_symbols": [],
       "description": "入力信号を等しいレベルで複数系統に分配する機器。幹線はここで終端する。分配数により2・4・6分配器がある。"
     },
     {
@@ -237,10 +221,7 @@
         "円が一重である",
         "円に長い引出線が付いている"
       ],
-      "confusable_symbols": [
-        "通信用アウトレット(電話用)",
-        "情報用アウトレット(LAN)"
-      ],
+      "confusable_symbols": [],
       "description": "各室で幹線から信号を取り出すテレビ受信用の端子ユニット。壁付は壁側を塗り、終端抵抗付はR、2端子は2を傍記する。"
     },
     {
@@ -267,10 +248,7 @@
         "三角形が塗りつぶされている",
         "三角形が円の外側にあり引出線が付いている"
       ],
-      "confusable_symbols": [
-        "アッテネータ",
-        "増幅器"
-      ],
+      "confusable_symbols": [],
       "description": "放送設備の拡声出力。壁付は壁側を塗り、ホーン形スピーカは別の表記を用いる。防滴形はWPを傍記する。"
     },
     {
@@ -297,10 +275,7 @@
         "矢印がなく円だけである",
         "矢印が右下から左上へ向かい、左右または上下反転している"
       ],
-      "confusable_symbols": [
-        "増幅器",
-        "スピーカ"
-      ],
+      "confusable_symbols": [],
       "description": "信号レベルを減衰させて調整する機器。過大入力の抑制やレベル合わせに用いる。"
     },
     {
@@ -327,10 +302,7 @@
         "円の中の塗りつぶしが縦長の棒である",
         "円が二重である"
       ],
-      "confusable_symbols": [
-        "情報用アウトレット(LAN)",
-        "直列ユニット(75Ω)"
-      ],
+      "confusable_symbols": [],
       "description": "電話機を接続する通信用の差込口。壁付は壁側を塗り、コネクタ種類(8ピン等)を傍記できる。"
     },
     {
@@ -356,10 +328,7 @@
         "円の中の塗りつぶしが丸である",
         "円の中に塗りつぶしがない"
       ],
-      "confusable_symbols": [
-        "通信用アウトレット(電話用)",
-        "直列ユニット(75Ω)"
-      ],
+      "confusable_symbols": [],
       "description": "LANなど情報配線の差込口。壁付は壁側を塗り、コネクタ種類(8P・光・BNC等)を傍記できる。"
     },
     {
@@ -384,9 +353,7 @@
         "枠の中の文字がHUBである",
         "枠の中に文字がない"
       ],
-      "confusable_symbols": [
-        "集線装置(ハブ)"
-      ],
+      "confusable_symbols": [],
       "description": "ネットワーク間の経路制御を行う装置。図記号は枠内にRT(「ルータ」と表記してもよい)。"
     },
     {
@@ -411,9 +378,7 @@
         "枠の中の文字がRTである",
         "枠の中に文字がない"
       ],
-      "confusable_symbols": [
-        "ルータ"
-      ],
+      "confusable_symbols": [],
       "description": "LAN配線を集約する集線装置。必要に応じてポート数を傍記する。"
     },
     {
@@ -438,10 +403,7 @@
         "枠の中が文字である",
         "枠の中が水平線1本だけである"
       ],
-      "confusable_symbols": [
-        "端子盤",
-        "プルボックス"
-      ],
+      "confusable_symbols": [],
       "description": "電話回線の引込点で、雷サージや電力線との混触から屋内設備を保護する装置。集合保安器は個数(実装/容量)を傍記する。"
     },
     {
@@ -468,10 +430,7 @@
         "枠の中に向かい合う接点の対がある",
         "枠の中に塗りつぶしがある"
       ],
-      "confusable_symbols": [
-        "保安器",
-        "プルボックス"
-      ],
+      "confusable_symbols": [],
       "description": "通信ケーブルを成端し、接続替えを行う盤。対数(実装/容量)を傍記する。電話・情報以外の端子盤にも適用する。"
     },
     {
@@ -501,12 +460,7 @@
         "正方形または正方形に近い外形で箱類(プルボックス・ジョイントボックス)に見える",
         "塗りつぶし領域が左上側で、左右または上下反転している"
       ],
-      "confusable_symbols": [
-        "配電盤",
-        "制御盤",
-        "プルボックス",
-        "ジョイントボックス"
-      ],
+      "confusable_symbols": [],
       "description": "幹線から各分岐回路へ電源を分配する盤。通信機器への給電元として系統図に登場する。"
     },
     {
@@ -534,11 +488,7 @@
         "内部の1領域または2領域が塗りつぶされる",
         "正方形または正方形に近い外形でプルボックスに見える"
       ],
-      "confusable_symbols": [
-        "分電盤",
-        "制御盤",
-        "プルボックス"
-      ],
+      "confusable_symbols": [],
       "description": "受電・幹線系統の開閉と配電を行う盤。"
     },
     {
@@ -567,11 +517,7 @@
         "画像の上下の対向領域が塗りつぶされ、90度回転または左右/上下反転した配置に見える",
         "正方形または正方形に近い外形でプルボックスに見える"
       ],
-      "confusable_symbols": [
-        "配電盤",
-        "分電盤",
-        "プルボックス"
-      ],
+      "confusable_symbols": [],
       "description": "機器の運転・制御用の機器類を収めた盤。"
     },
     {
@@ -599,12 +545,7 @@
         "内部が塗りつぶされている",
         "横長の長方形で盤類(分電盤・配電盤・制御盤)の外形に見える"
       ],
-      "confusable_symbols": [
-        "ジョイントボックス",
-        "分電盤",
-        "配電盤",
-        "制御盤"
-      ],
+      "confusable_symbols": [],
       "description": "電線・ケーブルの通線を容易にするための中継用ボックス。材料の種類や寸法を傍記する。"
     },
     {
@@ -627,10 +568,7 @@
         "プルボックス(正方形にX)と混同する"
       ],
       "description": "電線相互の接続部を収めるボックス。",
-      "confusable_symbols": [
-        "プルボックス",
-        "分電盤"
-      ]
+      "confusable_symbols": []
     },
     {
       "id": "interphone_master",
@@ -652,10 +590,7 @@
         "加入電話機(二重円+T)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
-      "confusable_symbols": [
-        "加入電話機(同じ二重円で文字だけが大文字T)",
-        "電話機形インターホン子機(同じ小文字tで円数だけが一重)"
-      ],
+      "confusable_symbols": [],
       "description": "建物内の相互通話を行うインターホンの親機(電話機形)。二重円で親機を表す。"
     },
     {
@@ -678,10 +613,7 @@
         "内線電話機(一重円+T)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='59' text-anchor='middle' font-size='26' font-family='sans-serif' fill='#1a1c1e' stroke='none'>t</text></svg>",
-      "confusable_symbols": [
-        "内線電話機(同じ一重円で文字だけが大文字T)",
-        "電話機形インターホン親機(同じ小文字tで円数だけが二重)"
-      ],
+      "confusable_symbols": [],
       "description": "インターホンの子機(電話機形)。一重円で子機を表す。"
     },
     {
@@ -704,10 +636,7 @@
         "電話機形インターホン子機(一重円+t)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='24'/><text x='50' y='60' text-anchor='middle' font-size='27' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
-      "confusable_symbols": [
-        "電話機形インターホン子機(同じ一重円で文字だけが小文字t)",
-        "加入電話機(同じ大文字Tで円数だけが二重)"
-      ],
+      "confusable_symbols": [],
       "description": "構内交換機(PBX)や主装置の配下で使う内線用電話機。ボタン電話機を示す場合はBTを傍記する。"
     },
     {
@@ -730,10 +659,7 @@
         "電話機形インターホン親機(二重円+t)と混同する"
       ],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3'><circle cx='50' cy='50' r='27'/><circle cx='50' cy='50' r='20'/><text x='50' y='60' text-anchor='middle' font-size='24' font-family='sans-serif' font-weight='bold' fill='#1a1c1e' stroke='none'>T</text></svg>",
-      "confusable_symbols": [
-        "電話機形インターホン親機(同じ二重円で文字だけが小文字t)",
-        "内線電話機(同じ大文字Tで円数だけが一重)"
-      ],
+      "confusable_symbols": [],
       "description": "電気通信事業者の回線に直接接続する電話機。"
     },
     {
@@ -754,9 +680,7 @@
       "common_mistakes": [
         "直列ユニット(二重円)と混同する"
       ],
-      "confusable_symbols": [
-        "直列ユニット(75Ω)"
-      ],
+      "confusable_symbols": [],
       "ref_svg": "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='#1a1c1e' stroke-width='3' stroke-linecap='round'><line x1='14' y1='50' x2='62' y2='50'/><circle cx='72' cy='50' r='10'/></svg>",
       "description": "テレビ受信機を接続する端子。2端子の場合は2を傍記する。"
     }

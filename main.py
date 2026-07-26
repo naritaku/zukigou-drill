@@ -730,6 +730,17 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
     forbidden_features: list[str] = symbol.get("forbidden_features", [])
     confusable_symbols: list[str] = symbol.get("confusable_symbols", [])
 
+    # 類似記号(confusions)は forbidden_features が各区別を既に含むため通常は空。
+    # 空のときはプロンプトから丸ごと省いて入力トークンを節約する。
+    fields_note = "required/forbidden/confusions" if confusable_symbols else "required/forbidden"
+    similar_note = "または類似記号の決定的特徴" if confusable_symbols else ""
+    confusions_block = ""
+    if confusable_symbols:
+        confusions_block = (
+            "\n\n類似記号(confusions): 画像がその記号の決定的特徴を持ち、課題よりその記号に見える場合 true\n"
+            + json.dumps({str(i): name for i, name in enumerate(confusable_symbols)}, ensure_ascii=False, indent=2)
+        )
+
     prompt = f"""あなたは施工図の図記号を厳密に識別する採点補助です。
 画像は受験者が手描きした電気設備の図記号で、課題は「{symbol['name']}」です。
 
@@ -738,18 +749,15 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
 - ただし、本数、接続関係、貫通、内外、塗りつぶし、文字、方向など、記号を識別する位相的特徴は厳密に判定する。
 - ここでの「左・右・上・下」は画像の見た目どおりの方向を指す。左右反転・上下反転・180度回転で指定と逆になっている場合は、該当する必須特徴を false、対応する禁止特徴を true にする。
 - 見えない特徴を推測で true にしない。
-- 対象記号らしく見えても、禁止特徴または類似記号の決定的特徴があれば明示する。
+- 対象記号らしく見えても、禁止特徴{similar_note}があれば明示する。
 - 各項目を独立に評価し、指定JSON以外を返さない。
-- required/forbidden/confusions は、下記の各番号(0,1,2...)に対応する true/false を、その順序どおりに並べた配列で返す。
+- {fields_note} は、下記の各番号(0,1,2...)に対応する true/false を、その順序どおりに並べた配列で返す。
 
 必須特徴(required): 画像に存在すれば true
 {json.dumps({str(i): f for i, f in enumerate(required_features)}, ensure_ascii=False, indent=2)}
 
 禁止特徴(forbidden): 画像に存在すれば true。1つでも true なら不合格
-{json.dumps({str(i): f for i, f in enumerate(forbidden_features)}, ensure_ascii=False, indent=2)}
-
-類似記号(confusions): 画像がその記号の決定的特徴を持ち、課題よりその記号に見える場合 true
-{json.dumps({str(i): name for i, name in enumerate(confusable_symbols)}, ensure_ascii=False, indent=2)}
+{json.dumps({str(i): f for i, f in enumerate(forbidden_features)}, ensure_ascii=False, indent=2)}{confusions_block}
 
 observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
 
