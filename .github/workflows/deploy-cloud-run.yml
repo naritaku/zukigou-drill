@@ -40,9 +40,11 @@ env:
   PROJECT_ID: zukigou-drill-dojo
   REGION: asia-northeast1
   SERVICE_NAME: zukigou-drill
-  # ランタイム SA。既定の compute SA は roles/editor を持つため使わない。
-  # 付与するロールは scripts/setup-gcp-guardrails.sh runtime-sa を参照。
+  # ランタイム SA とビルド SA。既定ではどちらも roles/editor を持つ compute SA が
+  # 使われるため、専用の最小権限 SA を明示する。
+  # 付与するロールは scripts/setup-gcp-guardrails.sh の runtime-sa / build-sa を参照。
   RUNTIME_SA: zukigou-drill-run@zukigou-drill-dojo.iam.gserviceaccount.com
+  BUILD_SA: zukigou-drill-build@zukigou-drill-dojo.iam.gserviceaccount.com
 
 jobs:
   deploy:
@@ -93,6 +95,7 @@ jobs:
             --region "$REGION" \
             --allow-unauthenticated \
             --service-account "$RUNTIME_SA" \
+            --build-service-account "projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}" \
             --max-instances "${{ inputs.max_instances }}" \
             --set-secrets "${{ steps.secrets.outputs.mappings }}" \
             --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
