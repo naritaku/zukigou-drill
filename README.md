@@ -6,6 +6,14 @@
 
 Google AI Dojo Season 2 提出作品
 
+<p align="center">
+  <img src="docs/demo.gif" alt="指で記号を描いて判定するまでのデモ" width="320">
+</p>
+
+<p align="center">
+  <sub>記号を描く → 判定 → 合否・不足特徴・名称と用途が返る（本番環境の実録）</sub>
+</p>
+
 ---
 
 ## 🎯 特徴
