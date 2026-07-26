@@ -711,7 +711,14 @@ def list_symbols() -> list[dict[str, Any]]:
 def question() -> dict[str, Any]:
     pool = [symbol for symbol in SYMBOLS.values() if symbol["verified"]]
     symbol = random.choice(pool)
-    return {"id": symbol["id"], "name": symbol["name"], "category": symbol["category"]}
+    # description は判定後の解説表示に使う。第二次検定は記号から名称と説明を
+    # 答えさせるため、描いたあとに用途まで確認できるようにしている。
+    return {
+        "id": symbol["id"],
+        "name": symbol["name"],
+        "category": symbol["category"],
+        "description": symbol.get("description", ""),
+    }
 
 
 @app.post("/api/judge")
