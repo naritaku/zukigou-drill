@@ -89,12 +89,10 @@ class JudgeEndpointTest(unittest.TestCase):
     def test_judge_valid_image_uses_schema_response_and_scores_in_code(self):
         required = self.symbol.get("required_features", self.symbol["features"])
         forbidden = self.symbol.get("forbidden_features", [])
-        confusions = self.symbol.get("confusable_symbols", [])
         response_text = json.dumps(
             {
                 "required": [True for _ in required],
                 "forbidden": [False for _ in forbidden],
-                "confusions": [False for _ in confusions],
                 "observation": "必要な特徴が見える",
             },
             ensure_ascii=False,
@@ -121,7 +119,6 @@ class JudgeEndpointTest(unittest.TestCase):
             {
                 "required": [True for _ in required],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "fallback succeeded",
             },
             ensure_ascii=False,
@@ -731,7 +728,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True, False],
                 "forbidden": [False, True],
-                "confusions": [True],
                 "observation": "観察結果",
             },
             ensure_ascii=False,
@@ -748,7 +744,6 @@ class GenerateVisionResultTest(unittest.TestCase):
         self.assertIsInstance(result, main.VisionResult)
         self.assertEqual(result.required, [True, False])
         self.assertEqual(result.forbidden, [False, True])
-        self.assertEqual(result.confusions, [True])
         self.assertEqual(result.observation, "観察結果")
 
     def test_generate_vision_result_falls_back_models(self):
@@ -762,7 +757,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "fallback succeeded",
             },
             ensure_ascii=False,
@@ -793,7 +787,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "fallback to paid succeeded",
             },
             ensure_ascii=False,
@@ -826,7 +819,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "valid response",
             },
             ensure_ascii=False,
@@ -856,7 +848,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "paid key succeeded",
             },
             ensure_ascii=False,
@@ -914,7 +905,6 @@ class GenerateVisionResultTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "paid key only",
             },
             ensure_ascii=False,
@@ -1062,7 +1052,6 @@ class VisionResultObservationTest(unittest.TestCase):
             {
                 "required": [True],
                 "forbidden": [],
-                "confusions": [],
                 "observation": "あ" * (main.MAX_OBSERVATION_CHARS + 200),
             },
             ensure_ascii=False,
@@ -1222,7 +1211,6 @@ class ReportEndpointTest(unittest.TestCase):
     def _valid_checks(self):
         checks = [{"feature": f"必須: {v}", "ok": True} for v in self.symbol["required_features"]]
         checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
-        checks += [{"feature": f"識別: {v}の決定的特徴ではない", "ok": True} for v in self.symbol.get("confusable_symbols", [])]
         return checks
 
     def test_report_accepts_matching_checklist(self):

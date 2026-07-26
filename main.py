@@ -67,7 +67,6 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
         symbol_id = symbol.get("id")
         required_features = symbol.get("required_features")
         forbidden_features = symbol.get("forbidden_features", [])
-        confusable_symbols = symbol.get("confusable_symbols", [])
         if not isinstance(symbol_id, str) or not symbol_id:
             raise RuntimeError(f"symbols[{index}].id is invalid")
         if symbol_id in result:
@@ -76,8 +75,6 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
             raise RuntimeError(f"symbol {symbol_id} must have non-empty required_features")
         if not isinstance(forbidden_features, list) or not all(isinstance(v, str) and v for v in forbidden_features):
             raise RuntimeError(f"symbol {symbol_id} has invalid forbidden_features")
-        if not isinstance(confusable_symbols, list) or not all(isinstance(v, str) and v for v in confusable_symbols):
-            raise RuntimeError(f"symbol {symbol_id} has invalid confusable_symbols")
         result[symbol_id] = symbol
 
     if not any(bool(symbol.get("verified")) for symbol in result.values()):
@@ -601,7 +598,6 @@ class VisionResult(BaseModel):
     model_config = ConfigDict(strict=True)
     required: list[bool] = Field(default_factory=list)
     forbidden: list[bool] = Field(default_factory=list)
-    confusions: list[bool] = Field(default_factory=list)
     observation: str = Field(default="")
 
     @field_validator("observation")
@@ -728,18 +724,6 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
 
     required_features: list[str] = symbol["required_features"]
     forbidden_features: list[str] = symbol.get("forbidden_features", [])
-    confusable_symbols: list[str] = symbol.get("confusable_symbols", [])
-
-    # 類似記号(confusions)は forbidden_features が各区別を既に含むため通常は空。
-    # 空のときはプロンプトから丸ごと省いて入力トークンを節約する。
-    fields_note = "required/forbidden/confusions" if confusable_symbols else "required/forbidden"
-    similar_note = "または類似記号の決定的特徴" if confusable_symbols else ""
-    confusions_block = ""
-    if confusable_symbols:
-        confusions_block = (
-            "\n\n類似記号(confusions): 画像がその記号の決定的特徴を持ち、課題よりその記号に見える場合 true\n"
-            + json.dumps({str(i): name for i, name in enumerate(confusable_symbols)}, ensure_ascii=False, indent=2)
-        )
 
     prompt = f"""あなたは施工図の図記号を厳密に識別する採点補助です。
 画像は受験者が手描きした電気設備の図記号で、課題は「{symbol['name']}」です。
@@ -749,15 +733,15 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
 - ただし、本数、接続関係、貫通、内外、塗りつぶし、文字、方向など、記号を識別する位相的特徴は厳密に判定する。
 - ここでの「左・右・上・下」は画像の見た目どおりの方向を指す。左右反転・上下反転・180度回転で指定と逆になっている場合は、該当する必須特徴を false、対応する禁止特徴を true にする。
 - 見えない特徴を推測で true にしない。
-- 対象記号らしく見えても、禁止特徴{similar_note}があれば明示する。
+- 対象記号らしく見えても、禁止特徴があれば明示する。
 - 各項目を独立に評価し、指定JSON以外を返さない。
-- {fields_note} は、下記の各番号(0,1,2...)に対応する true/false を、その順序どおりに並べた配列で返す。
+- required/forbidden は、下記の各番号(0,1,2...)に対応する true/false を、その順序どおりに並べた配列で返す。
 
 必須特徴(required): 画像に存在すれば true
 {json.dumps({str(i): f for i, f in enumerate(required_features)}, ensure_ascii=False, indent=2)}
 
 禁止特徴(forbidden): 画像に存在すれば true。1つでも true なら不合格
-{json.dumps({str(i): f for i, f in enumerate(forbidden_features)}, ensure_ascii=False, indent=2)}{confusions_block}
+{json.dumps({str(i): f for i, f in enumerate(forbidden_features)}, ensure_ascii=False, indent=2)}
 
 observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
 
@@ -768,8 +752,6 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
         checks.append({"feature": f"必須: {feature}", "ok": result._at(result.required, index)})
     for index, feature in enumerate(forbidden_features):
         checks.append({"feature": f"除外: {feature}がない", "ok": not result._at(result.forbidden, index)})
-    for index, name in enumerate(confusable_symbols):
-        checks.append({"feature": f"識別: {name}の決定的特徴ではない", "ok": not result._at(result.confusions, index)})
 
     failed_required = [
         feature for index, feature in enumerate(required_features)
@@ -779,13 +761,8 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
         feature for index, feature in enumerate(forbidden_features)
         if result._at(result.forbidden, index)
     ]
-    hit_confusions = [
-        name for index, name in enumerate(confusable_symbols)
-        if result._at(result.confusions, index)
-    ]
     mistakes = [f"必須特徴が不足: {value}" for value in failed_required]
     mistakes += [f"対象外の特徴を検出: {value}" for value in hit_forbidden]
-    mistakes += [f"{value}と判別できない可能性があります" for value in hit_confusions]
 
     n_ok = sum(check["ok"] for check in checks)
     passed = n_ok == len(checks)
@@ -829,7 +806,6 @@ def report(req: ReportRequest, request: Request, background: BackgroundTasks) ->
 
     expected_features = [f"必須: {value}" for value in symbol["required_features"]]
     expected_features += [f"除外: {value}がない" for value in symbol.get("forbidden_features", [])]
-    expected_features += [f"識別: {value}の決定的特徴ではない" for value in symbol.get("confusable_symbols", [])]
     received_features = [check.feature for check in req.judgment.checks]
     if received_features != expected_features:
         raise HTTPException(400, "judgment does not match symbol")
