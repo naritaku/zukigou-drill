@@ -20,6 +20,7 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 GEMINI_API_KEY="your-free-key" \
 GEMINI_API_KEYS="additional-free-key-1,additional-free-key-2" \
 GEMINI_PAID_API_KEY="your-paid-key" \
+JUDGMENT_SIGNING_KEY="replace-with-at-least-32-random-characters" \
 GEMINI_MODELS_FREE="gemini-3.1-flash-lite,gemini-3.5-flash" \
 GEMINI_MODELS_PAID="gemini-3.1-flash-lite,gemini-3.5-flash" \
 uvicorn main:app --host 0.0.0.0 --port 8080
@@ -44,6 +45,8 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `GEMINI_PAID_API_KEY`: 任意。有料キー（最後のフォールバック）
 - `GEMINI_MODELS_FREE`: 無料キー用モデルリスト（カンマ区切り）
 - `GEMINI_MODELS_PAID`: 有料キー用モデルリスト（カンマ区切り）
+- `JUDGMENT_SIGNING_KEY`: 必須。`/api/judge` の結果と画像を `/api/report` まで保護する
+  HMAC鍵（32文字以上）。Secret Managerで管理する。
 
 **GCS（判定データ保存）:**
 - `ALL_JUDGMENTS_BUCKET`: GCS バケット（全判定保存・品質監視用）
@@ -52,10 +55,20 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 **通信制限:**
 - `RATE_LIMIT`: 既定 20（`RATE_WINDOW` あたりの最大リクエスト数）
 - `RATE_WINDOW`: 既定 60（秒単位のウィンドウ）
+- `DAILY_JUDGE_LIMIT`: 既定 1000（UTC日ごとの全判定上限）
+- `DAILY_PAID_LIMIT`: 既定 100（UTC日ごとの有料キー利用上限）
+- `JUDGMENT_SIGNATURE_TTL`: 既定 3600（異議報告署名の有効秒数）
 - `TRUST_FORWARDED_FOR`: 既定 1。`X-Forwarded-For` の**末尾**をクライアント識別子に使う。
   Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
   無効にすると全ユーザーが 1 つのレート制限バケットを共有してしまう）。
   プロキシを介さず直接公開する場合のみ `0` にする。
+- `TRUSTED_PROXY_HOPS`: 既定 1。信頼するプロキシ段数。ロードバランサーを追加・変更した
+  場合はXFFの付与規則を確認して必ず見直す。
+- `PUBLIC_BASE_URL`: 任意。OGメタタグに使う公開URL。設定時はHostヘッダーより優先する。
+
+IPレート制限は意図的にインスタンスローカルであり、課金の厳密な防護には使わない。
+スケールアウトをまたぐ上限はFirestoreの日次カウンタが担当する。Gemini呼び出しは同期I/Oのため、
+Cloud Runのconcurrencyは同期ワーカープールを枯渇させない20以下を推奨する。
 
 **画像検証:**
 - `MAX_IMAGE_BYTES`: 既定 1000000
@@ -285,9 +298,9 @@ CI が使えないときはワークフローと同じ内容を手元から実�
 ```bash
 gcloud run deploy zukigou-drill --source . \
   --project zukigou-drill-dojo --region asia-northeast1 \
-  --allow-unauthenticated --max-instances 2 \
-  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest" \
-  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60"
+  --allow-unauthenticated --max-instances 2 --concurrency 20 \
+  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest,JUDGMENT_SIGNING_KEY=JUDGMENT_SIGNING_KEY:latest" \
+  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60|DAILY_JUDGE_LIMIT=1000|DAILY_PAID_LIMIT=100"
 
 # 疎通確認（/healthz は Google のフロントエンドが握るため 404 になる。/readyz を見る）
 curl -fsS https://zukigou-drill-vnoxzmytga-an.a.run.app/readyz

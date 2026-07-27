@@ -487,7 +487,7 @@ $("dispute").onclick = async () => {
       body: JSON.stringify({ symbol_id: lastJudgment.symbol_id, image_b64: lastImg, judgment: {
         passed: lastJudgment.passed, checks: lastJudgment.checks,
         mistakes: lastJudgment.mistakes, observation: lastJudgment.observation
-      }}),
+      }, issued_at: lastJudgment.issued_at, signature: lastJudgment.signature}),
     });
     d.textContent = res.ok ? "報告しました。改善に活用します" : "報告に失敗しました";
   } catch { d.textContent = "報告に失敗しました"; }

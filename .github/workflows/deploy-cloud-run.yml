@@ -23,6 +23,18 @@ on:
         description: Rate limit window in seconds
         required: false
         default: "60"
+      daily_judge_limit:
+        description: Global judgments allowed per UTC day
+        required: false
+        default: "1000"
+      daily_paid_limit:
+        description: Paid-key judgments allowed per UTC day
+        required: false
+        default: "100"
+      concurrency:
+        description: Cloud Run requests per instance (kept below the sync worker pool)
+        required: false
+        default: "20"
       all_judgments_bucket:
         description: GCS bucket for all judgments (empty disables saving)
         required: false
@@ -70,11 +82,13 @@ jobs:
         run: |
           # GEMINI_API_KEY 以外は任意。Secret Manager に無いものを指定すると
           # デプロイ全体が失敗するため、存在するものだけを渡す。
-          if ! gcloud secrets describe GEMINI_API_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
-            echo "::error::Secret GEMINI_API_KEY not found in project $PROJECT_ID"
-            exit 1
-          fi
-          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest"
+          for required in GEMINI_API_KEY JUDGMENT_SIGNING_KEY; do
+            if ! gcloud secrets describe "$required" --project "$PROJECT_ID" >/dev/null 2>&1; then
+              echo "::error::Secret $required not found in project $PROJECT_ID"
+              exit 1
+            fi
+          done
+          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest,JUDGMENT_SIGNING_KEY=JUDGMENT_SIGNING_KEY:latest"
           for name in GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
             if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
               MAPPINGS="${MAPPINGS},${name}=${name}:latest"
@@ -97,8 +111,9 @@ jobs:
             --service-account "$RUNTIME_SA" \
             --build-service-account "projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}" \
             --max-instances "${{ inputs.max_instances }}" \
+            --concurrency "${{ inputs.concurrency }}" \
             --set-secrets "${{ steps.secrets.outputs.mappings }}" \
-            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
+            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
 
       - name: Verify health endpoints
         run: |

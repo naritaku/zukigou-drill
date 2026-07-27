@@ -1,8 +1,11 @@
 import base64
 import io
 import json
+import os
 import unittest
 from unittest.mock import Mock, patch
+
+os.environ.setdefault("JUDGMENT_SIGNING_KEY", "test-signing-key-that-is-at-least-32-bytes")
 
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
@@ -192,10 +195,11 @@ class JudgeEndpointTest(unittest.TestCase):
 
     def test_judge_falls_back_models_before_paid_key(self):
         required = self.symbol.get("required_features", self.symbol["features"])
+        forbidden = self.symbol.get("forbidden_features", [])
         response_text = json.dumps(
             {
                 "required": [True for _ in required],
-                "forbidden": [],
+                "forbidden": [False for _ in forbidden],
                 "observation": "fallback succeeded",
             },
             ensure_ascii=False,
@@ -1269,9 +1273,9 @@ class EndpointSmokeTest(unittest.TestCase):
         self.assertEqual(ids, verified_ids)
         self.assertIn("ref_svg", data[0])
 
-    def test_symbols_lists_all(self):
+    def test_symbols_lists_only_verified(self):
         data = self.client.get("/api/symbols").json()
-        self.assertEqual(len(data), len(main.SYMBOLS))
+        self.assertEqual({s["id"] for s in data}, {s["id"] for s in main.SYMBOLS.values() if s["verified"]})
 
     def test_question_returns_verified_symbol(self):
         body = self.client.get("/api/question").json()
@@ -1300,12 +1304,25 @@ class ReportEndpointTest(unittest.TestCase):
         checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
         return checks
 
+    def _signed_payload(self, judgment):
+        image_b64 = inked_png_b64()
+        image = main._decode_png(image_b64)
+        issued_at = int(main.time.time())
+        signed = {**judgment, "score": f"{sum(c['ok'] for c in judgment['checks'])}/{len(judgment['checks'])}"}
+        return {
+            "symbol_id": self.symbol["id"],
+            "image_b64": image_b64,
+            "judgment": judgment,
+            "issued_at": issued_at,
+            "signature": main._judgment_signature(self.symbol["id"], signed, issued_at, image),
+        }
+
     def test_report_accepts_matching_checklist(self):
         judgment = {"passed": True, "checks": self._valid_checks(), "mistakes": [], "observation": ""}
         with patch.object(main, "_save_feedback") as save:
             res = self.client.post(
                 "/api/report",
-                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+                json=self._signed_payload(judgment),
             )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json(), {"ok": True})
@@ -1367,6 +1384,141 @@ class LoadSymbolsValidationTest(unittest.TestCase):
     def test_rejects_invalid_forbidden_features(self):
         with self.assertRaises(RuntimeError):
             self._run_with({"symbols": [self._ok_symbol(forbidden_features=[""])]})
+
+    def test_rejects_missing_or_invalid_catalog_fields(self):
+        for field, value in (("name", ""), ("category", None), ("verified", "yes")):
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                self._run_with({"symbols": [self._ok_symbol(**{field: value})]})
+
+
+class ReviewRegressionTest(unittest.TestCase):
+    """課金・応答整合性・署名のレビュー指摘に対する回帰テスト。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        self.symbol = next(s for s in main.SYMBOLS.values() if s["verified"])
+        main._hits.clear()
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+
+    def _response(self):
+        return json.dumps({
+            "required": [True] * len(self.symbol["required_features"]),
+            "forbidden": [False] * len(self.symbol.get("forbidden_features", [])),
+            "observation": "ok",
+        })
+
+    def test_global_daily_limit_returns_503_without_calling_gemini(self):
+        with patch.object(main, "_consume_daily_quota", return_value=False), \
+             patch.object(main, "_get_genai_client") as get_client:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 503)
+        get_client.assert_not_called()
+
+    def test_paid_limit_is_independent_from_global_limit(self):
+        paid = Mock()
+        paid.models.generate_content.return_value.text = self._response()
+        with patch.object(main, "_consume_daily_quota", side_effect=lambda field, limit: field != "paid_calls"), \
+             patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
+             patch.object(main, "_get_genai_client", return_value=paid):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 503)
+        paid.models.generate_content.assert_not_called()
+
+    def test_short_feature_array_falls_back_instead_of_failing_drawing(self):
+        short = json.loads(self._response())
+        short["required"] = short["required"][:-1]
+        client = Mock()
+        client.models.generate_content.side_effect = [Mock(text=json.dumps(short)), Mock(text=self._response())]
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "key")]), \
+             patch.object(main, "_gemini_models", return_value=["first", "second"]), \
+             patch.object(main, "_get_genai_client", return_value=client):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(client.models.generate_content.call_count, 2)
+
+    def test_success_resets_429_escalation(self):
+        main._mark_rate_limited("key")
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[0] - 1, 1)
+        client = Mock()
+        client.models.generate_content.return_value.text = self._response()
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "key")]), \
+             patch.object(main, "_gemini_models", return_value=["model"]), \
+             patch.object(main, "_get_genai_client", return_value=client):
+            main._generate_vision_result(
+                b"png", "prompt", self.symbol["id"],
+                len(self.symbol["required_features"]), len(self.symbol.get("forbidden_features", [])),
+            )
+        main._mark_rate_limited("key")
+        self.assertEqual(main._get_rate_limit_status("key")["consecutive_count"], 1)
+        self.assertEqual(main._get_rate_limit_status("key")["backoff_seconds"], 75)
+
+    def test_unverified_symbol_is_not_judgeable_or_listed(self):
+        unverified = {**self.symbol, "id": "unverified-test", "verified": False}
+        with patch.dict(main.SYMBOLS, {unverified["id"]: unverified}, clear=True):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": unverified["id"], "image_b64": inked_png_b64(),
+            })
+            listed = self.client.get("/api/symbols").json()
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(listed, [])
+
+    def test_report_rejects_missing_and_tampered_signature(self):
+        checks = [{"feature": f"必須: {v}", "ok": True} for v in self.symbol["required_features"]]
+        checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
+        judgment = {"passed": True, "checks": checks, "mistakes": [], "observation": "ok"}
+        base = {"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment}
+        self.assertEqual(self.client.post("/api/report", json=base).status_code, 400)
+        tampered = {**base, "issued_at": int(main.time.time()), "signature": "0" * 64}
+        self.assertEqual(self.client.post("/api/report", json=tampered).status_code, 400)
+
+    def test_firestore_io_is_not_called_while_rate_limit_lock_is_held(self):
+        class TrackingLock:
+            held = False
+            def __enter__(self):
+                self.held = True
+            def __exit__(self, *args):
+                self.held = False
+
+        lock = TrackingLock()
+        snapshot = Mock(exists=False)
+        ref = Mock()
+        ref.get.side_effect = lambda *a, **k: (
+            self.fail("Firestore get under _rate_limit_lock") if lock.held else snapshot
+        )
+        ref.set.side_effect = lambda *a, **k: (
+            self.fail("Firestore set under _rate_limit_lock") if lock.held else None
+        )
+        db = Mock()
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_rate_limit_lock", lock), \
+             patch.object(main, "_get_firestore_client", return_value=db):
+            self.assertIsNone(main._get_rate_limit_status("io-key"))
+            main._mark_rate_limited("io-key")
+
+    def test_daily_quota_uses_independent_transaction_fields(self):
+        snapshot = Mock(exists=True)
+        snapshot.to_dict.return_value = {"judge_calls": 3, "paid_calls": 1}
+        ref = Mock()
+        ref.get.return_value = snapshot
+        transaction = Mock()
+        db = Mock()
+        db.transaction.return_value = transaction
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            self.assertFalse(main._consume_daily_quota("judge_calls", 3))
+            self.assertTrue(main._consume_daily_quota("paid_calls", 2))
+        transaction.set.assert_called_once()
+        update = transaction.set.call_args.args[1]
+        self.assertIn("paid_calls", update)
+        self.assertNotIn("judge_calls", update)
 
 
 class FirestoreResilienceTest(unittest.TestCase):
