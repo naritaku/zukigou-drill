@@ -76,6 +76,14 @@ judgment_eval/cases/<case_id>/
   「必須は全 true・禁止は全 false」と一意に決まるので自動補完される。
 - 真値と `expect` が矛盾していたら読み込み時に落ちる。測定器が黙って狂うのを防ぐため。
 
+## ベースライン
+
+測定結果のスナップショットは `judgment_eval/baselines/` に置く。判定に影響する変更
+（`symbols.json` の文言、プロンプト、モデル）を入れたら直近のベースラインと比較する。
+
+- [2026-07-28 — お手本ケース 54 件](../judgment_eval/baselines/2026-07-28-rendered-reference.md)
+  — 偽 NG 率 **0.0%**、特徴単位の誤り **0/326**。ただし全て理想解答であり手描き精度ではない。
+
 ## 同梱されているケースの限界（重要）
 
 現在入っている 54 件はすべて `rendered-reference`、つまり **`symbols.json` の
