@@ -238,7 +238,12 @@ let drawing = false, tool = "pen", strokes = [], redoStack = [], current = null;
 let q = null, lastImg = null, lastSubmittedImg = null, lastJudgment = null, judging = false;
 
 function resize() {
+  dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth || cv.parentElement.clientWidth;
+  // 判定結果の表示中は CSS でキャンバスを隠している。モバイルブラウザの
+  // ツールバー開閉などでこの間に resize が発火しても、描画領域を 0px に
+  // 潰さない。再表示時に resetDrawingState が実寸でリサイズする。
+  if (!w) return;
   const h = Math.round(w * 0.9);
   cv.width = w * dpr; cv.height = h * dpr;
   cv.style.height = h + "px";
@@ -291,7 +296,9 @@ function resetDrawingState({ scrollTop = false } = {}) {
   strokes = [];
   redoStack = [];
   lastSubmittedImg = null;
-  redraw();
+  // 結果画面で非表示だったキャンバスが resize イベントに追従できなかった
+  // 場合も、次の問題・解き直しでは必ず現在の表示幅に復元する。
+  resize();
   if (scrollTop) {
     // レビュー結果までスクロールした位置を残すと、再描画時にキャンバス下部だけが表示されて
     // 入力位置がずれて見えるため、描画面の先頭へ戻してから描き直せるようにする。
