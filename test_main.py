@@ -1,11 +1,8 @@
 import base64
 import io
 import json
-import os
 import unittest
 from unittest.mock import Mock, patch
-
-os.environ.setdefault("JUDGMENT_SIGNING_KEY", "test-signing-key-that-is-at-least-32-bytes")
 
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
@@ -230,18 +227,13 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertEqual(paid_client.models.generate_content.call_args.kwargs["model"], "gemini-3.6-flash")
 
     def test_report_rejects_tampered_checklist_before_saving_feedback(self):
-        judgment = {
-            "passed": True,
-            "checks": [{"feature": "改ざんされた項目", "ok": True}],
-            "mistakes": [],
-            "observation": "",
-        }
-        with patch.object(main, "_save_feedback") as save_feedback:
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_save_feedback") as save_feedback:
             res = self.client.post(
                 "/api/report",
-                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+                json={"judgment_id": "0" * 32},
             )
-        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.status_code, 404)
         save_feedback.assert_not_called()
 
 
@@ -249,6 +241,7 @@ class RateLimitingTest(unittest.TestCase):
     def setUp(self):
         main._rate_limited_keys.clear()
         main._fs_status_cache.clear()
+        main._quota_memory.clear()
 
     def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
         status = main._get_rate_limit_status("test-key")
@@ -1304,35 +1297,21 @@ class ReportEndpointTest(unittest.TestCase):
         checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
         return checks
 
-    def _signed_payload(self, judgment):
-        image_b64 = inked_png_b64()
-        image = main._decode_png(image_b64)
-        issued_at = int(main.time.time())
-        signed = {**judgment, "score": f"{sum(c['ok'] for c in judgment['checks'])}/{len(judgment['checks'])}"}
-        return {
-            "symbol_id": self.symbol["id"],
-            "image_b64": image_b64,
-            "judgment": judgment,
-            "issued_at": issued_at,
-            "signature": main._judgment_signature(self.symbol["id"], signed, issued_at, image),
-        }
-
     def test_report_accepts_matching_checklist(self):
-        judgment = {"passed": True, "checks": self._valid_checks(), "mistakes": [], "observation": ""}
-        with patch.object(main, "_save_feedback") as save:
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", return_value=("ok", {"symbol_id": self.symbol["id"]})), \
+             patch.object(main, "_promote_feedback"):
             res = self.client.post(
                 "/api/report",
-                json=self._signed_payload(judgment),
+                json={"judgment_id": "a" * 32},
             )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json(), {"ok": True})
 
     def test_report_unknown_symbol_returns_404_json(self):
-        judgment = {"passed": True, "checks": [], "mistakes": [], "observation": ""}
-        res = self.client.post(
-            "/api/report",
-            json={"symbol_id": "nope", "image_b64": inked_png_b64(), "judgment": judgment},
-        )
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", return_value=("unknown", None)):
+            res = self.client.post("/api/report", json={"judgment_id": "b" * 32})
         self.assertEqual(res.status_code, 404)
         self.assertIn("application/json", res.headers["content-type"])
 
@@ -1400,6 +1379,7 @@ class ReviewRegressionTest(unittest.TestCase):
         main._hits.clear()
         main._rate_limited_keys.clear()
         main._fs_status_cache.clear()
+        main._quota_memory.clear()
 
     def _response(self):
         return json.dumps({
@@ -1409,18 +1389,20 @@ class ReviewRegressionTest(unittest.TestCase):
         })
 
     def test_global_daily_limit_returns_503_without_calling_gemini(self):
-        with patch.object(main, "_consume_daily_quota", return_value=False), \
+        with patch.object(main, "_consume_daily_quota", side_effect=[{"backend": "memory", "key": "ip", "ref": None}, None]), \
              patch.object(main, "_get_genai_client") as get_client:
             response = self.client.post("/api/judge", json={
                 "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
             })
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 429)
         get_client.assert_not_called()
 
     def test_paid_limit_is_independent_from_global_limit(self):
         paid = Mock()
         paid.models.generate_content.return_value.text = self._response()
-        with patch.object(main, "_consume_daily_quota", side_effect=lambda field, limit: field != "paid_calls"), \
+        def quota(field, limit, subject="global"):
+            return None if field == "paid_calls" else {"backend": "memory", "key": field, "ref": None}
+        with patch.object(main, "_consume_daily_quota", side_effect=quota), \
              patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
              patch.object(main, "_get_genai_client", return_value=paid):
             response = self.client.post("/api/judge", json={
@@ -1443,7 +1425,7 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(client.models.generate_content.call_count, 2)
 
-    def test_success_resets_429_escalation(self):
+    def test_recent_success_does_not_reduce_429_escalation(self):
         main._mark_rate_limited("key")
         main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[0] - 1, 1)
         client = Mock()
@@ -1456,8 +1438,13 @@ class ReviewRegressionTest(unittest.TestCase):
                 len(self.symbol["required_features"]), len(self.symbol.get("forbidden_features", [])),
             )
         main._mark_rate_limited("key")
-        self.assertEqual(main._get_rate_limit_status("key")["consecutive_count"], 1)
-        self.assertEqual(main._get_rate_limit_status("key")["backoff_seconds"], 75)
+        self.assertEqual(main._get_rate_limit_status("key")["consecutive_count"], 2)
+
+    def test_stable_success_reduces_only_one_backoff_level(self):
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[2] * 2 - 1, 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertEqual(main._rate_limited_keys["key"][1], 2)
 
     def test_unverified_symbol_is_not_judgeable_or_listed(self):
         unverified = {**self.symbol, "id": "unverified-test", "verified": False}
@@ -1469,14 +1456,11 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(listed, [])
 
-    def test_report_rejects_missing_and_tampered_signature(self):
-        checks = [{"feature": f"必須: {v}", "ok": True} for v in self.symbol["required_features"]]
-        checks += [{"feature": f"除外: {v}がない", "ok": True} for v in self.symbol.get("forbidden_features", [])]
-        judgment = {"passed": True, "checks": checks, "mistakes": [], "observation": "ok"}
-        base = {"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment}
-        self.assertEqual(self.client.post("/api/report", json=base).status_code, 400)
-        tampered = {**base, "issued_at": int(main.time.time()), "signature": "0" * 64}
-        self.assertEqual(self.client.post("/api/report", json=tampered).status_code, 400)
+    def test_report_rejects_unknown_and_replayed_id(self):
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", side_effect=[("unknown", None), ("replayed", None)]):
+            self.assertEqual(self.client.post("/api/report", json={"judgment_id": "c" * 32}).status_code, 404)
+            self.assertEqual(self.client.post("/api/report", json={"judgment_id": "c" * 32}).status_code, 409)
 
     def test_firestore_io_is_not_called_while_rate_limit_lock_is_held(self):
         class TrackingLock:
@@ -1503,22 +1487,108 @@ class ReviewRegressionTest(unittest.TestCase):
             main._mark_rate_limited("io-key")
 
     def test_daily_quota_uses_independent_transaction_fields(self):
-        snapshot = Mock(exists=True)
-        snapshot.to_dict.return_value = {"judge_calls": 3, "paid_calls": 1}
+        full = Mock(exists=True)
+        full.to_dict.return_value = {"count": 1}
+        available = Mock(exists=True)
+        available.to_dict.return_value = {"count": 0}
         ref = Mock()
-        ref.get.return_value = snapshot
+        ref.get.side_effect = [full, available]
         transaction = Mock()
         db = Mock()
         db.transaction.return_value = transaction
-        db.collection.return_value.document.return_value = ref
+        db.collection.return_value.document.return_value.collection.return_value.document.return_value = ref
         with patch.object(main, "_get_firestore_client", return_value=db), \
              patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
             self.assertFalse(main._consume_daily_quota("judge_calls", 3))
-            self.assertTrue(main._consume_daily_quota("paid_calls", 2))
+            self.assertTrue(main._consume_daily_quota("paid_calls", 20))
         transaction.set.assert_called_once()
         update = transaction.set.call_args.args[1]
-        self.assertIn("paid_calls", update)
-        self.assertNotIn("judge_calls", update)
+        self.assertIn("count", update)
+
+    def test_failed_gemini_releases_ip_and_global_reservations(self):
+        tokens = [
+            {"backend": "memory", "key": "ip", "ref": None},
+            {"backend": "memory", "key": "global", "ref": None},
+        ]
+        with patch.object(main, "_consume_daily_quota", side_effect=tokens), \
+             patch.object(main, "_generate_vision_result", side_effect=HTTPException(503, "failed")), \
+             patch.object(main, "_release_daily_quota") as release:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(release.call_count, 2)
+
+    def test_ip_quota_rejection_does_not_consume_global_quota(self):
+        with patch.object(main, "_consume_daily_quota", return_value=None) as consume, \
+             patch.object(main, "_get_genai_client") as get_client:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 429)
+        consume.assert_called_once()
+        get_client.assert_not_called()
+
+    def test_memory_quota_divides_limit_by_max_instances(self):
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 2), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quota("judge", 4))
+            self.assertIsNotNone(main._consume_daily_quota("judge", 4))
+            self.assertIsNone(main._consume_daily_quota("judge", 4))
+        self.assertEqual(main._quota_backend, "memory")
+
+    def test_quota_day_changes_at_jst_midnight(self):
+        before = main.datetime.datetime(2026, 7, 28, 14, 59, 59, tzinfo=main.datetime.UTC)
+        after = main.datetime.datetime(2026, 7, 28, 15, 0, 1, tzinfo=main.datetime.UTC)
+        self.assertEqual(main._quota_day(before), "2026-07-28")
+        self.assertEqual(main._quota_day(after), "2026-07-29")
+
+    def test_page_base_url_does_not_stick_between_hosts(self):
+        with patch.object(main, "PUBLIC_BASE_URL", ""):
+            first = self.client.get("https://first.example/drill")
+            second = self.client.get("https://second.example/drill")
+        self.assertIn("https://first.example/drill", first.text)
+        self.assertIn("https://second.example/drill", second.text)
+        self.assertNotIn("first.example", second.text)
+
+    def test_public_base_url_ignores_host_header(self):
+        with patch.object(main, "PUBLIC_BASE_URL", "https://canonical.example/"):
+            response = self.client.get("/drill", headers={"host": "attacker.example"})
+        self.assertIn("https://canonical.example/drill", response.text)
+        self.assertNotIn("attacker.example", response.text)
+
+    def test_short_xff_falls_back_to_last_and_warns(self):
+        request = ClientIpTest()._request({"x-forwarded-for": "203.0.113.10"})
+        with patch.object(main, "TRUSTED_PROXY_HOPS", 2), self.assertLogs("kenzu", "WARNING"):
+            self.assertEqual(main._client_ip(request), "203.0.113.10")
+
+    def test_claim_judgment_rejects_expired_and_replayed_records(self):
+        transaction = Mock()
+        db = Mock()
+        db.transaction.return_value = transaction
+        ref = db.collection.return_value.document.return_value
+        expired = Mock(exists=True)
+        expired.to_dict.return_value = {
+            "expires_at": main.datetime.datetime.now(main.datetime.UTC) - main.datetime.timedelta(seconds=1),
+            "disputed": False,
+        }
+        replayed = Mock(exists=True)
+        replayed.to_dict.return_value = {
+            "expires_at": main.datetime.datetime.now(main.datetime.UTC) + main.datetime.timedelta(seconds=1),
+            "disputed": True,
+        }
+        ref.get.side_effect = [expired, replayed]
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            self.assertEqual(main._claim_judgment("d" * 32)[0], "expired")
+            self.assertEqual(main._claim_judgment("d" * 32)[0], "replayed")
+        transaction.update.assert_not_called()
+
+    def test_report_is_disabled_without_feedback_bucket(self):
+        with patch.object(main, "FEEDBACK_BUCKET", ""):
+            response = self.client.post("/api/report", json={"judgment_id": "e" * 32})
+        self.assertEqual(response.status_code, 503)
 
 
 class FirestoreResilienceTest(unittest.TestCase):

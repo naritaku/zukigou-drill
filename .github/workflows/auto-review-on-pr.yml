@@ -39,11 +39,12 @@ jobs:
           CHANGED_STATS=$(git diff ${{ github.base_ref }}...HEAD --stat | tail -1)
 
           # PR コメント用のサマリー作成
-          cat > /tmp/review-summary.md << 'EOF'
+          cat > /tmp/review-summary.md << EOF
           ## 🤖 Auto Code Review Results
 
           ### ✅ Testing
-          - Status: **PASSED** (8/8 tests)
+          - Status: **PASSED**
+          - Result: \`$TEST_RESULT\`
           - Files changed: ${{ github.event.pull_request.changed_files }}
 
           ### 📝 Changed Files

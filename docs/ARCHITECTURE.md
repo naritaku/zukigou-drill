@@ -136,6 +136,7 @@ Cloud Run の scale to zero がそのまま成立する。
 | 413 | `image too large` | バイト数またはピクセル数が上限超過 |
 | 422 | pydantic の検証エラー詳細 | リクエストボディがスキーマ不一致 |
 | 429 | `しばらく待ってから再度お試しください` | IP あたりのレート制限（`RATE_LIMIT` / `RATE_WINDOW`） |
+| 429 | `daily_quota_exceeded` | IP または全体の日次判定枠が枯渇 |
 | 503 | `judgment service is not configured` | API キーが 1 つも設定されていない |
 | 503 | `judgment service unavailable` | 全キー・全モデルが失敗（quota 枯渇・API 障害など） |
 
@@ -144,9 +145,9 @@ Cloud Run の scale to zero がそのまま成立する。
 
 ### POST /api/report
 
-異議報告 API。「判定に納得できない」を押したときだけ呼ばれる。`FEEDBACK_BUCKET` が
-設定されている場合のみ、画像と判定結果を匿名で GCS に保存する（未設定なら保存せず
-`{"ok": true}` を返す）。リクエストは `symbol_id` / `image_b64` / `judgment`。
+異議報告 API。「判定に納得できない」を押したときだけ呼ばれる。リクエストは判定時に
+発行した`judgment_id`だけを受け取る。Firestoreトランザクションで一度だけ報告済みにし、
+再送は409、期限切れ・不明IDは404にする。`FEEDBACK_BUCKET`未設定時は503で無効化する。
 
 ### GET /healthz
 

@@ -31,6 +31,26 @@ on:
         description: Paid-key judgments allowed per UTC day
         required: false
         default: "100"
+      daily_ip_limit:
+        description: Judgments allowed per client per JST day
+        required: false
+        default: "50"
+      quota_shards:
+        description: Firestore quota shard count
+        required: false
+        default: "10"
+      public_base_url:
+        description: Canonical public URL
+        required: false
+        default: "https://zukigou-drill-dojo.run.app/"
+      trusted_proxy_hops:
+        description: Trusted X-Forwarded-For hops
+        required: false
+        default: "1"
+      judgment_record_ttl:
+        description: Dispute record lifetime in seconds
+        required: false
+        default: "3600"
       concurrency:
         description: Cloud Run requests per instance (kept below the sync worker pool)
         required: false
@@ -82,13 +102,13 @@ jobs:
         run: |
           # GEMINI_API_KEY 以外は任意。Secret Manager に無いものを指定すると
           # デプロイ全体が失敗するため、存在するものだけを渡す。
-          for required in GEMINI_API_KEY JUDGMENT_SIGNING_KEY; do
+          for required in GEMINI_API_KEY DAILY_IP_SALT; do
             if ! gcloud secrets describe "$required" --project "$PROJECT_ID" >/dev/null 2>&1; then
               echo "::error::Secret $required not found in project $PROJECT_ID"
               exit 1
             fi
           done
-          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest,JUDGMENT_SIGNING_KEY=JUDGMENT_SIGNING_KEY:latest"
+          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest,DAILY_IP_SALT=DAILY_IP_SALT:latest"
           for name in GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
             if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
               MAPPINGS="${MAPPINGS},${name}=${name}:latest"
@@ -97,6 +117,15 @@ jobs:
             fi
           done
           echo "mappings=${MAPPINGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate numeric inputs
+        env:
+          VALUES: "${{ inputs.max_instances }} ${{ inputs.concurrency }} ${{ inputs.rate_limit }} ${{ inputs.rate_window }} ${{ inputs.daily_judge_limit }} ${{ inputs.daily_paid_limit }} ${{ inputs.daily_ip_limit }} ${{ inputs.quota_shards }} ${{ inputs.trusted_proxy_hops }} ${{ inputs.judgment_record_ttl }}"
+        run: |
+          for value in $VALUES; do
+            [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::Invalid numeric input: $value"; exit 1; }
+          done
+          [[ "${{ inputs.public_base_url }}" != *"|"* ]] || { echo "::error::public_base_url contains reserved delimiter"; exit 1; }
 
       - name: Deploy from source
         run: |
@@ -113,7 +142,7 @@ jobs:
             --max-instances "${{ inputs.max_instances }}" \
             --concurrency "${{ inputs.concurrency }}" \
             --set-secrets "${{ steps.secrets.outputs.mappings }}" \
-            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
+            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|DAILY_IP_LIMIT=${{ inputs.daily_ip_limit }}|QUOTA_SHARDS=${{ inputs.quota_shards }}|MAX_INSTANCES=${{ inputs.max_instances }}|PUBLIC_BASE_URL=${{ inputs.public_base_url }}|TRUSTED_PROXY_HOPS=${{ inputs.trusted_proxy_hops }}|JUDGMENT_RECORD_TTL=${{ inputs.judgment_record_ttl }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
 
       - name: Verify health endpoints
         run: |

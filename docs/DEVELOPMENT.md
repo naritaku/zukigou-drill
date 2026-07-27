@@ -20,7 +20,6 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 GEMINI_API_KEY="your-free-key" \
 GEMINI_API_KEYS="additional-free-key-1,additional-free-key-2" \
 GEMINI_PAID_API_KEY="your-paid-key" \
-JUDGMENT_SIGNING_KEY="replace-with-at-least-32-random-characters" \
 GEMINI_MODELS_FREE="gemini-3.1-flash-lite,gemini-3.5-flash" \
 GEMINI_MODELS_PAID="gemini-3.1-flash-lite,gemini-3.5-flash" \
 uvicorn main:app --host 0.0.0.0 --port 8080
@@ -45,8 +44,7 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `GEMINI_PAID_API_KEY`: 任意。有料キー（最後のフォールバック）
 - `GEMINI_MODELS_FREE`: 無料キー用モデルリスト（カンマ区切り）
 - `GEMINI_MODELS_PAID`: 有料キー用モデルリスト（カンマ区切り）
-- `JUDGMENT_SIGNING_KEY`: 必須。`/api/judge` の結果と画像を `/api/report` まで保護する
-  HMAC鍵（32文字以上）。Secret Managerで管理する。
+- `JUDGMENT_RECORD_TTL`: 既定 3600。異議報告用のFirestore判定レコード保持秒数。
 
 **GCS（判定データ保存）:**
 - `ALL_JUDGMENTS_BUCKET`: GCS バケット（全判定保存・品質監視用）
@@ -55,9 +53,12 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 **通信制限:**
 - `RATE_LIMIT`: 既定 20（`RATE_WINDOW` あたりの最大リクエスト数）
 - `RATE_WINDOW`: 既定 60（秒単位のウィンドウ）
-- `DAILY_JUDGE_LIMIT`: 既定 1000（UTC日ごとの全判定上限）
-- `DAILY_PAID_LIMIT`: 既定 100（UTC日ごとの有料キー利用上限）
-- `JUDGMENT_SIGNATURE_TTL`: 既定 3600（異議報告署名の有効秒数）
+- `DAILY_JUDGE_LIMIT`: 既定 1000（JST日ごとの全判定上限）
+- `DAILY_PAID_LIMIT`: 既定 100（JST日ごとの有料キー利用上限）
+- `DAILY_IP_LIMIT`: 既定 50（JST日ごとのクライアント上限）
+- `DAILY_IP_SALT`: IPをドキュメントIDへ出さないためのSecret Manager管理値。
+- `QUOTA_SHARDS`: 既定 10。単一Firestoreドキュメントへの書き込み集中を避けるシャード数。
+- `MAX_INSTANCES`: 既定 2。Firestore障害時のメモリ上限をインスタンス数で割るために使う。
 - `TRUST_FORWARDED_FOR`: 既定 1。`X-Forwarded-For` の**末尾**をクライアント識別子に使う。
   Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
   無効にすると全ユーザーが 1 つのレート制限バケットを共有してしまう）。
@@ -66,9 +67,18 @@ uvicorn main:app --host 0.0.0.0 --port 8080
   場合はXFFの付与規則を確認して必ず見直す。
 - `PUBLIC_BASE_URL`: 任意。OGメタタグに使う公開URL。設定時はHostヘッダーより優先する。
 
-IPレート制限は意図的にインスタンスローカルであり、課金の厳密な防護には使わない。
-スケールアウトをまたぐ上限はFirestoreの日次カウンタが担当する。Gemini呼び出しは同期I/Oのため、
-Cloud Runのconcurrencyは同期ワーカープールを枯渇させない20以下を推奨する。
+IPレート制限は意図的にインスタンスローカルであり、最大2インスタンスでは単一IPが実質最大
+40回/分まで通りうる。厳密な日次防護はFirestoreのIP・全体カウンタが担当する。カウンタは
+10シャードへ分散するため上限にはシャード数程度の誤差を許容し、厳密な会計より課金額の桁を
+抑えることを優先する。Firestore障害時はプロセスメモリへ切り替え、上限を`MAX_INSTANCES`で
+割る。`/readyz`の`quota_backend`とERRORログで切り替えを監視できる。
+
+同期エンドポイントはanyio既定40スレッドを共有し、GeminiとFirestore I/Oの間スレッドを占有する。
+concurrency 20 × max-instances 2 = 最大40並行とし、各インスタンスで20スレッド分の余裕を残す。
+
+異議報告は短命な`judgments/{judgment_id}`をトランザクションで一度だけdisputedへ遷移させる。
+Firestore TTLポリシーを`judgments.expires_at`と`quota/*/counters.expires_at`へ設定すること。
+保留画像`pending/`にはGCSライフサイクルルールで1日後の削除を設定する。
 
 **画像検証:**
 - `MAX_IMAGE_BYTES`: 既定 1000000
@@ -299,8 +309,8 @@ CI が使えないときはワークフローと同じ内容を手元から実�
 gcloud run deploy zukigou-drill --source . \
   --project zukigou-drill-dojo --region asia-northeast1 \
   --allow-unauthenticated --max-instances 2 --concurrency 20 \
-  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest,JUDGMENT_SIGNING_KEY=JUDGMENT_SIGNING_KEY:latest" \
-  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60|DAILY_JUDGE_LIMIT=1000|DAILY_PAID_LIMIT=100"
+  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest,DAILY_IP_SALT=DAILY_IP_SALT:latest" \
+  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60|DAILY_JUDGE_LIMIT=1000|DAILY_PAID_LIMIT=100|DAILY_IP_LIMIT=50|QUOTA_SHARDS=10|MAX_INSTANCES=2|PUBLIC_BASE_URL=https://zukigou-drill-dojo.run.app/|TRUSTED_PROXY_HOPS=1|JUDGMENT_RECORD_TTL=3600"
 
 # 疎通確認（/healthz は Google のフロントエンドが握るため 404 になる。/readyz を見る）
 curl -fsS https://zukigou-drill-vnoxzmytga-an.a.run.app/readyz

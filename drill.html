@@ -395,7 +395,9 @@ $("judge").onclick = async () => {
       body: JSON.stringify({ symbol_id: judgingSymbolId, image_b64: img }),
     });
     if (!res.ok) {
-      showError(apiErrorMessage(res.status));
+      const detail = (await res.json().catch(() => ({}))).detail;
+      showError(detail === "daily_quota_exceeded" ?
+        "本日の判定枠を使い切りました。日本時間の0時に回復します。" : apiErrorMessage(res.status));
       return;
     }
     const result = await res.json();
@@ -484,12 +486,14 @@ $("dispute").onclick = async () => {
     const res = await fetch("/api/report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol_id: lastJudgment.symbol_id, image_b64: lastImg, judgment: {
-        passed: lastJudgment.passed, checks: lastJudgment.checks,
-        mistakes: lastJudgment.mistakes, observation: lastJudgment.observation
-      }, issued_at: lastJudgment.issued_at, signature: lastJudgment.signature}),
+      body: JSON.stringify({ judgment_id: lastJudgment.judgment_id }),
     });
-    d.textContent = res.ok ? "報告しました。改善に活用します" : "報告に失敗しました";
+    if (res.ok) d.textContent = "報告しました。改善に活用します";
+    else {
+      const detail = (await res.json().catch(() => ({}))).detail;
+      d.textContent = detail === "replayed" ? "この判定は報告済みです" :
+        detail === "expired" || detail === "unknown" ? "報告期限が切れています" : "報告に失敗しました";
+    }
   } catch { d.textContent = "報告に失敗しました"; }
 };
 

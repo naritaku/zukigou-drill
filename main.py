@@ -8,19 +8,20 @@ import base64
 import binascii
 import datetime
 import hashlib
-import hmac
 import html
 import io
 import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 import uuid
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -34,6 +35,15 @@ ROOT = Path(__file__).resolve().parent
 logger = logging.getLogger("kenzu")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        logger.warning("invalid integer environment variable; using default", extra={"name": name})
+        return default
+
+
 MAX_IMAGE_B64_CHARS = int(os.environ.get("MAX_IMAGE_B64_CHARS", "1500000"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", "1000000"))
 # 送信前に許容する画像の最長辺(px)。これを超えたらサーバー側で縮小してから判定する。
@@ -44,13 +54,17 @@ INK_THRESHOLD = int(os.environ.get("INK_THRESHOLD", "245"))
 MAX_OBSERVATION_CHARS = 500
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "20"))
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", "60"))
-DAILY_JUDGE_LIMIT = int(os.environ.get("DAILY_JUDGE_LIMIT", "1000"))
-DAILY_PAID_LIMIT = int(os.environ.get("DAILY_PAID_LIMIT", "100"))
-JUDGMENT_SIGNATURE_TTL = int(os.environ.get("JUDGMENT_SIGNATURE_TTL", "3600"))
+DAILY_JUDGE_LIMIT = _env_int("DAILY_JUDGE_LIMIT", 1000)
+DAILY_PAID_LIMIT = _env_int("DAILY_PAID_LIMIT", 100)
+DAILY_IP_LIMIT = _env_int("DAILY_IP_LIMIT", 50)
+QUOTA_SHARDS = max(1, _env_int("QUOTA_SHARDS", 10))
+MAX_INSTANCES = max(1, _env_int("MAX_INSTANCES", 2))
+JUDGMENT_RECORD_TTL = _env_int("JUDGMENT_RECORD_TTL", 3600)
+DAILY_IP_SALT = os.environ.get("DAILY_IP_SALT", "zukigou-drill")
 # Cloud Run / ロードバランサ配下では X-Forwarded-For の末尾が実クライアント。
 # プロキシを介さず直接公開する場合は "0" にして接続元 IP を使う。
 TRUST_FORWARDED_FOR = os.environ.get("TRUST_FORWARDED_FOR", "1") not in ("0", "false", "False")
-TRUSTED_PROXY_HOPS = max(1, int(os.environ.get("TRUSTED_PROXY_HOPS", "1")))
+TRUSTED_PROXY_HOPS = max(1, _env_int("TRUSTED_PROXY_HOPS", 1))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
@@ -342,38 +356,44 @@ def _mark_rate_limited(api_key: str) -> None:
 
 
 def _mark_key_succeeded(api_key: str) -> None:
-    """成功したキーの429連続回数を解除する。外部 I/O 中は共有ロックを保持しない。"""
+    """十分な安定期間の後だけ、成功時にバックオフを1段減衰させる。"""
+    now = time.time()
     doc_id = _rate_limit_doc_id(api_key)
     with _rate_limit_lock:
-        memory = _rate_limited_keys.pop(api_key, None)
+        memory = _rate_limited_keys.get(api_key)
         cached = _fs_status_cache.get(api_key)
     known_count: int | None = None
+    last_at: float | None = None
     if memory:
+        last_at = memory[0]
         known_count = memory[1]
-    elif cached is not None:
-        known_count = cached[1][1] if cached[1] else 0
+    elif cached is not None and cached[1]:
+        last_at, known_count, _ = cached[1]
+    if known_count is None or last_at is None or known_count <= 0:
+        return
+    backoff = _BACKOFF_SECONDS[min(known_count - 1, len(_BACKOFF_SECONDS) - 1)]
+    if now - last_at < backoff * 2:
+        return
+    new_count = max(0, known_count - 1)
+    with _rate_limit_lock:
+        current = _rate_limited_keys.get(api_key)
+        if current and current != memory:
+            return
+        if new_count:
+            _rate_limited_keys[api_key] = (last_at, new_count)
+        else:
+            _rate_limited_keys.pop(api_key, None)
+        _fs_status_cache.pop(api_key, None)
     db = _get_firestore_client()
     if not db:
         return
     try:
-        if known_count is None:
-            doc = db.collection("rate_limits").document(doc_id).get()
-            known_count = doc.to_dict().get("consecutive_count", 0) if doc.exists else 0
-        if known_count <= 0:
-            return
-        with _rate_limit_lock:
-            if api_key in _rate_limited_keys:  # 読み取り中に新しい429が発生した
-                return
         db.collection("rate_limits").document(doc_id).set({
-            "consecutive_count": 0,
-            "backoff_seconds": 0,
-            "timestamp": time.time(),
+            "consecutive_count": new_count,
+            "backoff_seconds": 0 if new_count == 0 else _BACKOFF_SECONDS[new_count - 1],
         }, merge=True)
-        with _rate_limit_lock:
-            if api_key not in _rate_limited_keys:
-                _fs_status_cache[api_key] = (time.time(), None)
     except Exception as e:
-        logger.warning(f"Failed to reset rate limit status in Firestore: {e}")
+        logger.warning(f"Failed to decay rate limit status in Firestore: {e}")
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -391,32 +411,84 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return False
 
 
-def _consume_daily_quota(field: str, limit: int) -> bool:
-    """Firestore の日次枠を原子的に確保する。障害時は警告して fail-open。"""
+class QuotaToken(TypedDict):
+    backend: str
+    key: str
+    ref: Any
+    released: bool
+
+
+_quota_memory: dict[str, int] = defaultdict(int)
+_quota_memory_lock = threading.Lock()
+_quota_backend = "firestore"
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _quota_day(now: datetime.datetime | None = None) -> str:
+    return (now or datetime.datetime.now(datetime.UTC)).astimezone(JST).date().isoformat()
+
+
+def _consume_memory_quota(day: str, field: str, subject_hash: str, limit: int) -> QuotaToken | None:
+    global _quota_backend
+    _quota_backend = "memory"
+    key = f"{day}:{field}:{subject_hash}"
+    local_limit = max(1, limit // MAX_INSTANCES)
+    with _quota_memory_lock:
+        if _quota_memory[key] >= local_limit:
+            return None
+        _quota_memory[key] += 1
+    logger.error("Firestore quota unavailable; using memory quota", extra={"quota": field})
+    return {"backend": "memory", "key": key, "ref": None, "released": False}
+
+
+def _consume_daily_quota(field: str, limit: int, subject: str = "global") -> QuotaToken | None:
+    """シャード化した日次枠を予約する。失敗時はトークンで一度だけ解放できる。"""
+    global _quota_backend
     if limit <= 0:
-        return False
+        return None
+    day = _quota_day()
+    subject_hash = hashlib.sha256(f"{subject}|{DAILY_IP_SALT}".encode()).hexdigest()[:16]
     db = _get_firestore_client()
     if not db:
-        logger.warning("Daily quota unavailable; allowing request (fail-open)", extra={"quota": field})
-        return True
-    day = datetime.datetime.now(datetime.UTC).date().isoformat()
-    ref = db.collection("quota").document(day)
+        return _consume_memory_quota(day, field, subject_hash, limit)
+    _quota_backend = "firestore"
+    shard = random.randrange(QUOTA_SHARDS) if subject == "global" else int(subject_hash, 16) % QUOTA_SHARDS
+    per_shard = (limit + QUOTA_SHARDS - 1) // QUOTA_SHARDS
+    doc_id = f"{field}-{subject_hash}-{shard}"
+    ref = db.collection("quota").document(day).collection("counters").document(doc_id)
     try:
         transaction = db.transaction()
 
         @firestore.transactional
-        def reserve(tx: Any) -> bool:
+        def reserve(tx: Any) -> QuotaToken | None:
             snapshot = ref.get(transaction=tx)
-            current = snapshot.to_dict().get(field, 0) if snapshot.exists else 0
-            if not isinstance(current, int) or current >= limit:
-                return False
-            tx.set(ref, {field: firestore.Increment(1), "date": day}, merge=True)
-            return True
+            current = snapshot.to_dict().get("count", 0) if snapshot.exists else 0
+            if not isinstance(current, int) or current >= per_shard:
+                return None
+            expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=2)
+            tx.set(ref, {"count": firestore.Increment(1), "expires_at": expires}, merge=True)
+            return {"backend": "firestore", "key": doc_id, "ref": ref, "released": False}
 
         return reserve(transaction)
     except Exception as e:
-        logger.warning("Failed to update daily quota; allowing request (fail-open): %s", e, extra={"quota": field})
-        return True
+        logger.error("Firestore quota failed; retrying with memory quota", extra={"quota": field, "error": str(e)})
+        return _consume_memory_quota(day, field, subject_hash, limit)
+
+
+def _release_daily_quota(token: QuotaToken | None) -> None:
+    if not token:
+        return
+    if token.get("released", False):
+        return
+    token["released"] = True
+    try:
+        if token["backend"] == "memory":
+            with _quota_memory_lock:
+                _quota_memory[token["key"]] = max(0, _quota_memory[token["key"]] - 1)
+        else:
+            token["ref"].set({"count": firestore.Increment(-1)}, merge=True)
+    except Exception:
+        logger.exception("failed to release daily quota", extra={"quota_key": token["key"]})
 
 
 def _generate_vision_result(
@@ -431,7 +503,6 @@ def _generate_vision_result(
         raise HTTPException(503, "judgment service is not configured")
 
     last_error: Exception | None = None
-    global_quota_reserved = False
     for key_label, api_key in api_keys:
         # レート制限中のキーはスキップ
         rate_limit_info = _get_rate_limit_status(api_key)
@@ -457,17 +528,18 @@ def _generate_vision_result(
                 )
             continue
 
-        if not global_quota_reserved:
-            if not _consume_daily_quota("judge_calls", DAILY_JUDGE_LIMIT):
-                raise HTTPException(503, "daily judgment quota exhausted")
-            global_quota_reserved = True
-        if key_label == "paid" and not _consume_daily_quota("paid_calls", DAILY_PAID_LIMIT):
+        paid_token = None
+        if key_label == "paid":
+            paid_token = _consume_daily_quota("paid_calls", DAILY_PAID_LIMIT)
+        if key_label == "paid" and not paid_token:
             logger.warning("Daily paid Gemini quota exhausted", extra={"symbol_id": symbol_id})
             continue
 
         models = _gemini_models(key_label)
         if not models:
             raise HTTPException(503, "judgment model is not configured")
+        length_mismatches = 0
+        key_succeeded = False
         for model in models:
             try:
                 response = _get_genai_client(api_key).models.generate_content(
@@ -484,13 +556,19 @@ def _generate_vision_result(
                         or (forbidden_count is not None and len(result.forbidden) != forbidden_count)):
                     raise ValueError("Gemini feature array length mismatch")
                 _mark_key_succeeded(api_key)
+                key_succeeded = True
                 return result
             except (ValidationError, ValueError) as exc:
                 last_error = exc
+                if isinstance(exc, ValueError) and not isinstance(exc, ValidationError):
+                    length_mismatches += 1
                 logger.warning(
                     "invalid Gemini response; trying next Gemini candidate",
-                    extra={"symbol_id": symbol_id, "model": model, "key_label": key_label},
+                    extra={"symbol_id": symbol_id, "model": model, "key_label": key_label,
+                           "reason": "length_mismatch" if length_mismatches else "validation_error"},
                 )
+                if length_mismatches >= 2:
+                    break
             except Exception as exc:
                 last_error = exc
                 # レート制限エラー（429）を検出したら、このキーを記録して次のキーを試す
@@ -505,6 +583,8 @@ def _generate_vision_result(
                     "Gemini candidate failed; trying next Gemini candidate",
                     extra={"symbol_id": symbol_id, "model": model, "key_label": key_label},
                 )
+        if paid_token and not key_succeeded:
+            _release_daily_quota(paid_token)
 
     error_msg = str(last_error) if last_error else "unknown error"
     logger.error(
@@ -622,6 +702,93 @@ def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> No
     _save_to_gcs(FEEDBACK_BUCKET, symbol_id, image, judgment, prefix="disputed")
 
 
+def _record_judgment(judgment_id: str, symbol_id: str, judgment: dict[str, Any]) -> bool:
+    """異議報告用の短命レコードを保存する。失敗時も判定自体は継続する。"""
+    db = _get_firestore_client()
+    if not db:
+        logger.error("judgment record unavailable", extra={"reason": "firestore_unavailable"})
+        return False
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        db.collection("judgments").document(judgment_id).set({
+            "symbol_id": symbol_id,
+            "judgment": judgment,
+            "created_at": now,
+            "expires_at": now + datetime.timedelta(seconds=JUDGMENT_RECORD_TTL),
+            "disputed": False,
+        })
+        return True
+    except Exception:
+        logger.exception("failed to record judgment", extra={"symbol_id": symbol_id})
+        return False
+
+
+def _save_pending_feedback(judgment_id: str, image: bytes) -> None:
+    global _storage_client
+    if not FEEDBACK_BUCKET:
+        return
+    try:
+        if _storage_client is None:
+            with _storage_lock:
+                if _storage_client is None:
+                    from google.cloud import storage
+                    _storage_client = storage.Client()
+        _storage_client.bucket(FEEDBACK_BUCKET).blob(
+            f"pending/{judgment_id}.png"
+        ).upload_from_string(image, content_type="image/png")
+    except Exception:
+        logger.exception("failed to save pending feedback image")
+
+
+def _promote_feedback(judgment_id: str, record: dict[str, Any]) -> None:
+    """保留画像を disputed へコピーする。失敗は報告APIへ波及させない。"""
+    if not FEEDBACK_BUCKET:
+        return
+    try:
+        global _storage_client
+        if _storage_client is None:
+            with _storage_lock:
+                if _storage_client is None:
+                    from google.cloud import storage
+                    _storage_client = storage.Client()
+        bucket = _storage_client.bucket(FEEDBACK_BUCKET)
+        source = bucket.blob(f"pending/{judgment_id}.png")
+        bucket.copy_blob(source, bucket, f"disputed/{judgment_id}.png")
+        bucket.blob(f"disputed/{judgment_id}.json").upload_from_string(
+            json.dumps(record, ensure_ascii=False, default=str), content_type="application/json"
+        )
+    except Exception:
+        logger.exception("failed to promote disputed feedback", extra={"judgment_id": judgment_id})
+
+
+def _claim_judgment(judgment_id: str) -> tuple[str, dict[str, Any] | None]:
+    """異議報告を一度だけ受理する。戻り値は ok / unknown / expired / replayed。"""
+    db = _get_firestore_client()
+    if not db:
+        return "unknown", None
+    ref = db.collection("judgments").document(judgment_id)
+    try:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def claim(tx: Any) -> tuple[str, dict[str, Any] | None]:
+            snapshot = ref.get(transaction=tx)
+            if not snapshot.exists:
+                return "unknown", None
+            data = snapshot.to_dict()
+            if data.get("expires_at") <= datetime.datetime.now(datetime.UTC):
+                return "expired", None
+            if data.get("disputed"):
+                return "replayed", None
+            tx.update(ref, {"disputed": True, "disputed_at": firestore.SERVER_TIMESTAMP})
+            return "ok", data
+
+        return claim(transaction)
+    except Exception:
+        logger.exception("failed to claim judgment", extra={"judgment_id": judgment_id})
+        return "unknown", None
+
+
 # docs_url/redoc_url だけを None にしても /openapi.json は既定で公開されるため、
 # openapi_url も明示的に無効化する。
 app = FastAPI(title="KENZU", docs_url=None, redoc_url=None, openapi_url=None)
@@ -635,7 +802,14 @@ def _page(name: str, request: Request) -> HTMLResponse:
     base_url = PUBLIC_BASE_URL or str(request.base_url)
     if not base_url.endswith("/"):
         base_url += "/"
-    return HTMLResponse(_PAGE_CACHE[name].replace("__BASE_URL__", html.escape(base_url, quote=True)))
+    parsed = urlsplit(base_url)
+    local_http = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "testserver")
+    valid_host = bool(parsed.netloc and re.fullmatch(r"[A-Za-z0-9.\-:]+", parsed.netloc))
+    if not valid_host or (parsed.scheme != "https" and not local_http):
+        logger.warning("invalid public base URL omitted")
+        base_url = ""
+    rendered = _PAGE_CACHE[name].replace("__BASE_URL__", html.escape(base_url, quote=True))
+    return HTMLResponse(rendered, headers={"Cache-Control": "max-age=60, must-revalidate"})
 
 
 @app.exception_handler(404)
@@ -679,7 +853,13 @@ def _client_ip(request: Request) -> str:
             if candidates:
                 # 信頼するリバースプロキシの段数だけ右から読み飛ばせる。構成変更時は
                 # TRUSTED_PROXY_HOPS も同時に見直すこと。
-                return candidates[-min(TRUSTED_PROXY_HOPS, len(candidates))]
+                if len(candidates) < TRUSTED_PROXY_HOPS:
+                    logger.warning(
+                        "x-forwarded-for shorter than TRUSTED_PROXY_HOPS",
+                        extra={"hops": TRUSTED_PROXY_HOPS, "received": len(candidates)},
+                    )
+                    return candidates[-1]
+                return candidates[-TRUSTED_PROXY_HOPS]
     return request.client.host if request.client else "unknown"
 
 
@@ -691,7 +871,7 @@ def _check_rate(request: Request) -> None:
         while queue and now - queue[0] > RATE_WINDOW:
             queue.popleft()
         if len(queue) >= RATE_LIMIT:
-            raise HTTPException(429, "しばらく待ってから再度お試しください")
+            raise HTTPException(429, "rate_limited")
         queue.append(now)
         # 長時間使われていないキーを定期的に掃除する。
         if len(_hits) > 10_000:
@@ -727,59 +907,9 @@ def _flag_at(values: list[bool], index: int) -> bool:
     return values[index]
 
 
-class ReportCheck(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    feature: str = Field(min_length=1, max_length=300)
-    ok: bool
-
-
-class ReportJudgment(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    passed: bool
-    checks: list[ReportCheck] = Field(max_length=50)
-    mistakes: list[str] = Field(default_factory=list, max_length=50)
-    observation: str = Field(default="", max_length=MAX_OBSERVATION_CHARS)
-
-    @field_validator("mistakes")
-    @classmethod
-    def validate_mistakes(cls, values: list[str]) -> list[str]:
-        if any(not value or len(value) > 300 for value in values):
-            raise ValueError("invalid mistake")
-        return values
-
-
 class ReportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    symbol_id: str = Field(min_length=1, max_length=100)
-    image_b64: str = Field(min_length=1, max_length=MAX_IMAGE_B64_CHARS)
-    judgment: ReportJudgment
-    issued_at: int | None = None
-    signature: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
-
-
-def _judgment_signing_key() -> bytes:
-    value = os.environ.get("JUDGMENT_SIGNING_KEY", "")
-    if len(value) < 32:
-        raise HTTPException(503, "judgment signing is not configured")
-    return value.encode()
-
-
-def _judgment_signature(
-    symbol_id: str, judgment: dict[str, Any], issued_at: int, image: bytes
-) -> str:
-    # 画像と表示・保存対象の全判定値を束ね、正規の判定を別画像へ付け替える攻撃も防ぐ。
-    signed = {
-        "symbol_id": symbol_id,
-        "passed": judgment["passed"],
-        "score": judgment["score"],
-        "checks": judgment["checks"],
-        "mistakes": judgment["mistakes"],
-        "observation": judgment["observation"],
-        "issued_at": issued_at,
-        "image_sha256": hashlib.sha256(image).hexdigest(),
-    }
-    canonical = json.dumps(signed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hmac.new(_judgment_signing_key(), canonical.encode(), hashlib.sha256).hexdigest()
+    judgment_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
 @app.get("/")
@@ -868,8 +998,13 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
     if not symbol or not symbol.get("verified"):
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
-    # 設定不備のままGeminiだけを消費して署名生成に失敗しないよう先に検証する。
-    _judgment_signing_key()
+    ip_token = _consume_daily_quota("ip_calls", DAILY_IP_LIMIT, _client_ip(request))
+    if not ip_token:
+        raise HTTPException(429, "daily_quota_exceeded")
+    global_token = _consume_daily_quota("judge_calls", DAILY_JUDGE_LIMIT)
+    if not global_token:
+        _release_daily_quota(ip_token)
+        raise HTTPException(429, "daily_quota_exceeded")
 
     required_features: list[str] = symbol["required_features"]
     forbidden_features: list[str] = symbol.get("forbidden_features", [])
@@ -894,9 +1029,14 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
 
 observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
 
-    result = _generate_vision_result(
-        image, prompt, req.symbol_id, len(required_features), len(forbidden_features)
-    )
+    try:
+        result = _generate_vision_result(
+            image, prompt, req.symbol_id, len(required_features), len(forbidden_features)
+        )
+    except Exception:
+        _release_daily_quota(global_token)
+        _release_daily_quota(ip_token)
+        raise
 
     checks: list[dict[str, Any]] = []
     for index, feature in enumerate(required_features):
@@ -936,6 +1076,7 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
             _save_to_gcs, ALL_JUDGMENTS_BUCKET, req.symbol_id, image, judgment_data, "judgments"
         )
 
+    judgment_id = uuid.uuid4().hex
     response_data = {
         "symbol_id": req.symbol_id,
         "passed": passed,
@@ -944,46 +1085,25 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
         "mistakes": mistakes,
         "observation": result.observation,
         "ref_svg": symbol.get("ref_svg", ""),
+        "judgment_id": judgment_id,
     }
-    issued_at = int(time.time())
-    response_data["issued_at"] = issued_at
-    response_data["signature"] = _judgment_signature(req.symbol_id, response_data, issued_at, image)
+    if FEEDBACK_BUCKET and _record_judgment(judgment_id, req.symbol_id, judgment_data):
+        background.add_task(_save_pending_feedback, judgment_id, image)
     return response_data
 
 
 @app.post("/api/report")
 def report(req: ReportRequest, request: Request, background: BackgroundTasks) -> dict[str, bool]:
     _check_rate(request)
-    symbol = SYMBOLS.get(req.symbol_id)
-    if not symbol or not symbol.get("verified"):
-        raise HTTPException(404, "unknown symbol")
-    image = _decode_png(req.image_b64)
-
-    expected_features = [f"必須: {value}" for value in symbol["required_features"]]
-    expected_features += [f"除外: {value}がない" for value in symbol.get("forbidden_features", [])]
-    received_features = [check.feature for check in req.judgment.checks]
-    if received_features != expected_features:
-        raise HTTPException(400, "judgment does not match symbol")
-
-    judgment = req.judgment.model_dump()
-    now = int(time.time())
-    if req.issued_at is None or req.signature is None:
-        raise HTTPException(400, "judgment signature required")
-    if req.issued_at > now + 60 or now - req.issued_at > JUDGMENT_SIGNATURE_TTL:
-        raise HTTPException(400, "judgment signature expired")
-    signed_judgment = {**judgment, "score": f"{sum(c.ok for c in req.judgment.checks)}/{len(req.judgment.checks)}"}
-    expected_signature = _judgment_signature(req.symbol_id, signed_judgment, req.issued_at, image)
-    if not hmac.compare_digest(req.signature, expected_signature):
-        raise HTTPException(400, "invalid judgment signature")
-    judgment.update(
-        {
-            "disputed": True,
-            "symbol_id": req.symbol_id,
-            "date": datetime.date.today().isoformat(),
-        }
-    )
-    if FEEDBACK_BUCKET:
-        background.add_task(_save_feedback, req.symbol_id, image, judgment)
+    if not FEEDBACK_BUCKET:
+        raise HTTPException(503, "report_disabled")
+    status, record = _claim_judgment(req.judgment_id)
+    if status != "ok":
+        logger.warning("feedback report rejected", extra={"reason": status})
+        code = 409 if status == "replayed" else 404
+        raise HTTPException(code, status)
+    if FEEDBACK_BUCKET and record:
+        background.add_task(_promote_feedback, req.judgment_id, record)
     return {"ok": True}
 
 
@@ -1006,6 +1126,8 @@ def readyz() -> dict[str, Any]:
         "ok": True,
         "symbols": len(SYMBOLS),
         "feedback_enabled": bool(FEEDBACK_BUCKET),
+        "report_enabled": bool(FEEDBACK_BUCKET and _get_firestore_client() is not None),
+        "quota_backend": _quota_backend,
         "keys_available": len(available),
         "keys_total": len(keys),
     }
