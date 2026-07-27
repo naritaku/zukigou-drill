@@ -291,6 +291,10 @@ $("redo").onclick = () => { const s = redoStack.pop(); if (s) strokes.push(s); r
 $("clear").onclick = () => { strokes = []; redoStack = []; lastSubmittedImg = null; redraw(); hideReport(); };
 $("next").onclick = () => { if (!judging) loadQuestion(); };
 $("goNext").onclick = () => { if (!judging) loadQuestion(); };
+function scrollToPageTop() {
+  // 表示内容の切り替えによるレイアウト更新後に、固定ヘッダーを含むページ先頭を表示する。
+  requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+}
 function resetDrawingState({ scrollTop = false } = {}) {
   hideReport();
   strokes = [];
@@ -302,7 +306,7 @@ function resetDrawingState({ scrollTop = false } = {}) {
   if (scrollTop) {
     // レビュー結果までスクロールした位置を残すと、再描画時にキャンバス下部だけが表示されて
     // 入力位置がずれて見えるため、描画面の先頭へ戻してから描き直せるようにする。
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+    scrollToPageTop();
   }
 }
 $("retry").onclick = () => { if (!judging) resetDrawingState({ scrollTop: true }); };
@@ -322,7 +326,7 @@ async function loadQuestion() {
   $("qName").textContent = q.name;
   $("qCat").textContent = "JIS C 0303\n" + q.category;
   $("qCat").innerHTML = "JIS C 0303<br>" + q.category;
-  window.scrollTo({ top: 0 });
+  scrollToPageTop();
 }
 
 /* 送信前正規化: 白背景化 → 描画範囲トリミング → 余白付き512px */
@@ -469,7 +473,7 @@ function render(r) {
   $("obs").textContent = "観察: " + r.observation;
   document.body.classList.add("reviewed");
   $("report").classList.add("show");
-  $("report").scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollToPageTop();
 }
 
 $("dispute").onclick = async () => {
