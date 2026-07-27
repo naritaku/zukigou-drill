@@ -57,7 +57,10 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `DAILY_PAID_LIMIT`: 既定 100（JST日ごとの有料キー利用上限）
 - `DAILY_IP_LIMIT`: 既定 50（JST日ごとのクライアント上限）
 - `DAILY_IP_SALT`: IPをドキュメントIDへ出さないためのSecret Manager管理値。
-- `QUOTA_SHARDS`: 既定 10。単一Firestoreドキュメントへの書き込み集中を避けるシャード数。
+  日次上限はいずれも `0` 以下で「その枠を完全に閉じる」意味になる（無制限ではない）。
+  `DAILY_IP_LIMIT=0` は全判定を 429 にするので、緩めたいときは大きな値を入れる。
+- `QUOTA_SHARDS`: 既定 10。全体カウンタが単一Firestoreドキュメントへ集中しないよう分散する
+  シャード数。IP別カウンタはドキュメントIDにIPハッシュを含み既に分散するため適用しない。
 - `MAX_INSTANCES`: 既定 2。Firestore障害時のメモリ上限をインスタンス数で割るために使う。
 - `TRUST_FORWARDED_FOR`: 既定 1。`X-Forwarded-For` の**末尾**をクライアント識別子に使う。
   Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
@@ -69,8 +72,8 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 
 IPレート制限は意図的にインスタンスローカルであり、最大2インスタンスでは単一IPが実質最大
 40回/分まで通りうる。厳密な日次防護はFirestoreのIP・全体カウンタが担当する。カウンタは
-10シャードへ分散するため上限にはシャード数程度の誤差を許容し、厳密な会計より課金額の桁を
-抑えることを優先する。Firestore障害時はプロセスメモリへ切り替え、上限を`MAX_INSTANCES`で
+全体カウンタのみ10シャードへ分散するため上限にはシャード数程度の誤差を許容し、
+厳密な会計より課金額の桁を抑えることを優先する。Firestore障害時はプロセスメモリへ切り替え、上限を`MAX_INSTANCES`で
 割る。`/readyz`の`quota_backend`とERRORログで切り替えを監視できる。
 
 同期エンドポイントはanyio既定40スレッドを共有し、GeminiとFirestore I/Oの間スレッドを占有する。
@@ -78,7 +81,12 @@ concurrency 20 × max-instances 2 = 最大40並行とし、各インスタンス
 
 異議報告は短命な`judgments/{judgment_id}`をトランザクションで一度だけdisputedへ遷移させる。
 Firestore TTLポリシーを`judgments.expires_at`と`quota/*/counters.expires_at`へ設定すること。
-保留画像`pending/`にはGCSライフサイクルルールで1日後の削除を設定する。
+
+**注意**: 報告APIは画像を受け取らないため、`FEEDBACK_BUCKET`設定時は**異議の有無に関わらず
+全判定の画像**が`pending/{judgment_id}.png`へ保存される（報告されたものだけが`disputed/`へ
+昇格する）。`pending/`に1日後削除のGCSライフサイクルルールを**必ず**設定すること。設定を
+忘れると、報告されなかった描画画像が無期限に残り、保管コストと個人データの保持期間が膨らむ。
+画像を一切保持したくない場合は`FEEDBACK_BUCKET`を未設定にする（報告APIは503で無効化される）。
 
 **画像検証:**
 - `MAX_IMAGE_BYTES`: 既定 1000000
@@ -251,6 +259,11 @@ GitHub Actions が Google Cloud に認証するための準備。
    gcloud secrets create GEMINI_PAID_API_KEY \
      --replication-policy="automatic" \
      --data-file=- <<< "paid-key"
+
+   # 日次 IP クォータのハッシュソルト（必須。未作成だとデプロイが失敗する）
+   gcloud secrets create DAILY_IP_SALT \
+     --replication-policy="automatic" \
+     --data-file=- <<< "$(openssl rand -hex 32)"
    ```
 
 4. **専用ランタイム SA を作り、シークレットの参照権を付与**
@@ -286,8 +299,9 @@ GitHub Actions が Google Cloud に認証するための準備。
    `roles/storage.objectCreator` を**バケット単位で**追加する。
 
    > **注**: シークレットは環境変数への値コピーではなく `--set-secrets` でマウントする。
-   > ワークフローは Secret Manager に**存在するものだけ**を渡すため、未作成のキーを
-   > 気にせず実行できる。
+   > `GEMINI_API_KEY` と `DAILY_IP_SALT` は**必須**で、未作成ならワークフローが
+   > その場で失敗する。それ以外（`GEMINI_API_KEYS` / `GEMINI_PAID_API_KEY`）は
+   > **存在するものだけ**が渡されるため、未作成でも気にせず実行できる。
 
 ### 手動デプロイ
 

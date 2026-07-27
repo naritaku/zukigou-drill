@@ -226,15 +226,16 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertEqual(attempted_models, ["gemini-3.6-flash", "gemini-2.5-flash-lite"])
         self.assertEqual(paid_client.models.generate_content.call_args.kwargs["model"], "gemini-3.6-flash")
 
-    def test_report_rejects_tampered_checklist_before_saving_feedback(self):
+    def test_report_rejects_unclaimable_judgment_before_promoting_feedback(self):
         with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
-             patch.object(main, "_save_feedback") as save_feedback:
+             patch.object(main, "_claim_judgment", return_value=("unknown", None)), \
+             patch.object(main, "_promote_feedback") as promote_feedback:
             res = self.client.post(
                 "/api/report",
                 json={"judgment_id": "0" * 32},
             )
         self.assertEqual(res.status_code, 404)
-        save_feedback.assert_not_called()
+        promote_feedback.assert_not_called()
 
 
 class RateLimitingTest(unittest.TestCase):
@@ -1388,7 +1389,7 @@ class ReviewRegressionTest(unittest.TestCase):
             "observation": "ok",
         })
 
-    def test_global_daily_limit_returns_503_without_calling_gemini(self):
+    def test_global_daily_limit_returns_429_without_calling_gemini(self):
         with patch.object(main, "_consume_daily_quota", side_effect=[{"backend": "memory", "key": "ip", "ref": None}, None]), \
              patch.object(main, "_get_genai_client") as get_client:
             response = self.client.post("/api/judge", json={
@@ -1504,6 +1505,31 @@ class ReviewRegressionTest(unittest.TestCase):
         transaction.set.assert_called_once()
         update = transaction.set.call_args.args[1]
         self.assertIn("count", update)
+
+    def test_subject_quota_uses_full_limit_instead_of_one_shard_slice(self):
+        # 主体別カウンタをさらにシャードすると 1 主体は常に同じシャードへ落ち、
+        # 実効上限が limit/QUOTA_SHARDS まで縮んでしまう。
+        snapshot = Mock(exists=True)
+        snapshot.to_dict.return_value = {"count": main.DAILY_IP_LIMIT - 1}
+        ref = Mock()
+        ref.get.return_value = snapshot
+        db = Mock()
+        db.collection.return_value.document.return_value.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            token = main._consume_daily_quota("ip_calls", main.DAILY_IP_LIMIT, "203.0.113.7")
+        self.assertIsNotNone(token)
+        self.assertTrue(token["key"].endswith("-0"))
+
+    def test_paid_quota_is_released_when_no_model_is_configured(self):
+        paid_token = {"backend": "memory", "key": "paid", "ref": None, "released": False}
+        with patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
+             patch.object(main, "_consume_daily_quota", return_value=paid_token), \
+             patch.object(main, "_gemini_models", return_value=[]), \
+             patch.object(main, "_release_daily_quota") as release:
+            with self.assertRaises(HTTPException):
+                main._generate_vision_result(b"png", "prompt", self.symbol["id"])
+        release.assert_called_once_with(paid_token)
 
     def test_failed_gemini_releases_ip_and_global_reservations(self):
         tokens = [

@@ -135,19 +135,27 @@ Cloud Run の scale to zero がそのまま成立する。
 | 404 | `unknown symbol` | `symbol_id` が symbols.json に存在しない |
 | 413 | `image too large` | バイト数またはピクセル数が上限超過 |
 | 422 | pydantic の検証エラー詳細 | リクエストボディがスキーマ不一致 |
-| 429 | `しばらく待ってから再度お試しください` | IP あたりのレート制限（`RATE_LIMIT` / `RATE_WINDOW`） |
+| 429 | `rate_limited` | IP あたりのレート制限（`RATE_LIMIT` / `RATE_WINDOW`） |
 | 429 | `daily_quota_exceeded` | IP または全体の日次判定枠が枯渇 |
 | 503 | `judgment service is not configured` | API キーが 1 つも設定されていない |
 | 503 | `judgment service unavailable` | 全キー・全モデルが失敗（quota 枯渇・API 障害など） |
 
 `/api/*` のエラーは常に JSON で返る（HTML の 404 ページは通常ページのみ）。
-429 に `Retry-After` ヘッダは付かない。
+429 に `Retry-After` ヘッダは付かない。`detail` は機械可読な識別子で、
+利用者向け文言はフロントエンド側で組み立てる。
 
 ### POST /api/report
 
 異議報告 API。「判定に納得できない」を押したときだけ呼ばれる。リクエストは判定時に
 発行した`judgment_id`だけを受け取る。Firestoreトランザクションで一度だけ報告済みにし、
 再送は409、期限切れ・不明IDは404にする。`FEEDBACK_BUCKET`未設定時は503で無効化する。
+
+| ステータス | `detail` | 発生条件 |
+|---|---|---|
+| 404 | `unknown` | `judgment_id` が存在しない、または Firestore を参照できない |
+| 404 | `expired` | `JUDGMENT_RECORD_TTL` を過ぎた判定 |
+| 409 | `replayed` | 同じ `judgment_id` で既に報告済み |
+| 503 | `report_disabled` | `FEEDBACK_BUCKET` 未設定 |
 
 ### GET /healthz
 

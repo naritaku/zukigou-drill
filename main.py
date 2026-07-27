@@ -421,6 +421,8 @@ class QuotaToken(TypedDict):
 _quota_memory: dict[str, int] = defaultdict(int)
 _quota_memory_lock = threading.Lock()
 _quota_backend = "firestore"
+_QUOTA_DEGRADED_LOG_INTERVAL = 60.0
+_quota_memory_degraded_at = [0.0]
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 
@@ -437,7 +439,13 @@ def _consume_memory_quota(day: str, field: str, subject_hash: str, limit: int) -
         if _quota_memory[key] >= local_limit:
             return None
         _quota_memory[key] += 1
-    logger.error("Firestore quota unavailable; using memory quota", extra={"quota": field})
+        # Firestore 障害中は全リクエストがここを通るため、ログは一定間隔に間引く。
+        now = time.time()
+        should_log = now - _quota_memory_degraded_at[0] > _QUOTA_DEGRADED_LOG_INTERVAL
+        if should_log:
+            _quota_memory_degraded_at[0] = now
+    if should_log:
+        logger.error("Firestore quota unavailable; using memory quota", extra={"quota": field})
     return {"backend": "memory", "key": key, "ref": None, "released": False}
 
 
@@ -452,8 +460,16 @@ def _consume_daily_quota(field: str, limit: int, subject: str = "global") -> Quo
     if not db:
         return _consume_memory_quota(day, field, subject_hash, limit)
     _quota_backend = "firestore"
-    shard = random.randrange(QUOTA_SHARDS) if subject == "global" else int(subject_hash, 16) % QUOTA_SHARDS
-    per_shard = (limit + QUOTA_SHARDS - 1) // QUOTA_SHARDS
+    if subject == "global":
+        # 全体カウンタは 1 ドキュメントに書き込みが集中するのでシャードへ分散する。
+        shard = random.randrange(QUOTA_SHARDS)
+        per_shard = (limit + QUOTA_SHARDS - 1) // QUOTA_SHARDS
+    else:
+        # 主体別カウンタは subject_hash 自体が書き込みを分散する。ここでさらにシャードを
+        # 掛けても 1 主体は常に同じシャードへ落ちるだけで、実効上限が limit/QUOTA_SHARDS
+        # まで縮む（DAILY_IP_LIMIT=50, QUOTA_SHARDS=10 なら 1 IP あたり 5 回/日）。
+        shard = 0
+        per_shard = limit
     doc_id = f"{field}-{subject_hash}-{shard}"
     ref = db.collection("quota").document(day).collection("counters").document(doc_id)
     try:
@@ -537,6 +553,7 @@ def _generate_vision_result(
 
         models = _gemini_models(key_label)
         if not models:
+            _release_daily_quota(paid_token)
             raise HTTPException(503, "judgment model is not configured")
         length_mismatches = 0
         key_succeeded = False
@@ -695,11 +712,6 @@ def _save_to_gcs(
             "failed to save judgment data to GCS",
             extra={"symbol_id": symbol_id, "bucket": bucket_name, "prefix": prefix},
         )
-
-
-def _save_feedback(symbol_id: str, image: bytes, judgment: dict[str, Any]) -> None:
-    """明示的な異議報告だけを匿名保存する。失敗は判定処理に波及させない。"""
-    _save_to_gcs(FEEDBACK_BUCKET, symbol_id, image, judgment, prefix="disputed")
 
 
 def _record_judgment(judgment_id: str, symbol_id: str, judgment: dict[str, Any]) -> bool:
