@@ -1,4 +1,5 @@
 import base64
+import inspect
 import io
 import json
 import unittest
@@ -1390,7 +1391,7 @@ class ReviewRegressionTest(unittest.TestCase):
         })
 
     def test_global_daily_limit_returns_429_without_calling_gemini(self):
-        with patch.object(main, "_consume_daily_quota", side_effect=[{"backend": "memory", "key": "ip", "ref": None}, None]), \
+        with patch.object(main, "_consume_daily_quotas", return_value=None), \
              patch.object(main, "_get_genai_client") as get_client:
             response = self.client.post("/api/judge", json={
                 "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
@@ -1401,9 +1402,9 @@ class ReviewRegressionTest(unittest.TestCase):
     def test_paid_limit_is_independent_from_global_limit(self):
         paid = Mock()
         paid.models.generate_content.return_value.text = self._response()
-        def quota(field, limit, subject="global"):
-            return None if field == "paid_calls" else {"backend": "memory", "key": field, "ref": None}
-        with patch.object(main, "_consume_daily_quota", side_effect=quota), \
+        judge_tokens = [{"backend": "memory", "key": field, "ref": None} for field in ("ip", "global")]
+        with patch.object(main, "_consume_daily_quotas", return_value=judge_tokens), \
+             patch.object(main, "_consume_daily_quota", return_value=None), \
              patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
              patch.object(main, "_get_genai_client", return_value=paid):
             response = self.client.post("/api/judge", json={
@@ -1521,6 +1522,38 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertIsNotNone(token)
         self.assertTrue(token["key"].endswith("-0"))
 
+    def test_promote_feedback_keeps_record_when_pending_image_is_missing(self):
+        # 保留画像が無くても、報告は既に disputed 済みで再送できない。
+        # copy_blob の例外で判定メタデータまで失わせない。
+        blob = Mock()
+        bucket = Mock()
+        bucket.blob.return_value = blob
+        bucket.copy_blob.side_effect = RuntimeError("pending image not found")
+        storage = Mock()
+        storage.bucket.return_value = bucket
+        judgment_id = "a" * 32
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_get_storage_client", return_value=storage), \
+             self.assertLogs("kenzu", "ERROR"):
+            main._promote_feedback(judgment_id, {"symbol_id": self.symbol["id"]})
+        self.assertEqual(bucket.blob.call_args_list[0].args[0], f"disputed/{judgment_id}.json")
+        blob.upload_from_string.assert_called_once()
+
+    def test_feedback_persistence_is_not_deferred_to_background_tasks(self):
+        # Cloud Run は既定でレスポンス後に CPU を絞るため、BackgroundTasks の完了時刻を
+        # 別の API から当てにできない。異議報告の経路は同期で行う。
+        self.assertNotIn("background", inspect.signature(main.report).parameters)
+
+    def test_page_response_is_private_and_varies_by_host(self):
+        response = self.client.get("/drill")
+        self.assertIn("private", response.headers["cache-control"])
+        self.assertEqual(response.headers["vary"], "Host")
+
+    def test_client_ip_counts_from_the_end_not_proxy_hops(self):
+        request = ClientIpTest()._request({"x-forwarded-for": "1.1.1.1, 2.2.2.2, 3.3.3.3"})
+        with patch.object(main, "CLIENT_IP_INDEX_FROM_END", 2):
+            self.assertEqual(main._client_ip(request), "2.2.2.2")
+
     def test_firestore_outage_reports_503_not_expired_404(self):
         # サーバー側障害を 404 で返すと、フロントが「報告期限が切れています」と
         # 誤って表示してしまう。
@@ -1556,7 +1589,7 @@ class ReviewRegressionTest(unittest.TestCase):
             {"backend": "memory", "key": "ip", "ref": None},
             {"backend": "memory", "key": "global", "ref": None},
         ]
-        with patch.object(main, "_consume_daily_quota", side_effect=tokens), \
+        with patch.object(main, "_consume_daily_quotas", return_value=tokens), \
              patch.object(main, "_generate_vision_result", side_effect=HTTPException(503, "failed")), \
              patch.object(main, "_release_daily_quota") as release:
             response = self.client.post("/api/judge", json={
@@ -1565,15 +1598,30 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(release.call_count, 2)
 
-    def test_ip_quota_rejection_does_not_consume_global_quota(self):
-        with patch.object(main, "_consume_daily_quota", return_value=None) as consume, \
+    def test_ip_and_global_quota_are_reserved_in_one_transaction(self):
+        # 個別に取ると、後段が枯渇したとき前段を解放して回る必要が出る。
+        with patch.object(main, "_consume_daily_quotas", return_value=None) as consume, \
              patch.object(main, "_get_genai_client") as get_client:
             response = self.client.post("/api/judge", json={
                 "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
             })
         self.assertEqual(response.status_code, 429)
         consume.assert_called_once()
+        self.assertEqual(
+            [field for field, _, _ in consume.call_args.args[0]], ["ip_calls", "judge_calls"]
+        )
         get_client.assert_not_called()
+
+    def test_partial_memory_quota_reservation_is_rolled_back(self):
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 1), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quotas([("a", 1, "s"), ("b", 5, "s")]))
+            # a はもう枯渇。b だけ増えた状態を残さない。
+            self.assertIsNone(main._consume_daily_quotas([("a", 1, "s"), ("b", 5, "s")]))
+            self.assertIsNotNone(main._consume_daily_quotas([("b", 5, "s")]))
+        key = main._quota_target(main._quota_day(), "b", 5, "s")["memory_key"]
+        self.assertEqual(main._quota_memory[key], 2)
 
     def test_memory_quota_divides_limit_by_max_instances(self):
         main._quota_memory.clear()
@@ -1582,7 +1630,14 @@ class ReviewRegressionTest(unittest.TestCase):
             self.assertIsNotNone(main._consume_daily_quota("judge", 4))
             self.assertIsNotNone(main._consume_daily_quota("judge", 4))
             self.assertIsNone(main._consume_daily_quota("judge", 4))
-        self.assertEqual(main._quota_backend, "memory")
+        self.assertEqual(main._quota_status()["quota_backend"], "memory")
+
+    def test_quota_status_counts_fallbacks_instead_of_last_backend(self):
+        # 成功した 1 リクエストで firestore に戻る単純なフラグでは部分障害が隠れる。
+        before = main._quota_status()["quota_fallbacks"]
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._consume_daily_quota("fallback-probe", 5)
+        self.assertEqual(main._quota_status()["quota_fallbacks"], before + 1)
 
     def test_quota_day_changes_at_jst_midnight(self):
         before = main.datetime.datetime(2026, 7, 28, 14, 59, 59, tzinfo=main.datetime.UTC)
@@ -1606,7 +1661,7 @@ class ReviewRegressionTest(unittest.TestCase):
 
     def test_short_xff_falls_back_to_last_and_warns(self):
         request = ClientIpTest()._request({"x-forwarded-for": "203.0.113.10"})
-        with patch.object(main, "TRUSTED_PROXY_HOPS", 2), self.assertLogs("kenzu", "WARNING"):
+        with patch.object(main, "CLIENT_IP_INDEX_FROM_END", 2), self.assertLogs("kenzu", "WARNING"):
             self.assertEqual(main._client_ip(request), "203.0.113.10")
 
     def test_claim_judgment_rejects_expired_and_replayed_records(self):

@@ -182,6 +182,9 @@ Cloud Run の scale to zero がそのまま成立する。
   "ok": true,
   "symbols": 54,
   "feedback_enabled": false,
+  "report_enabled": false,
+  "quota_backend": "firestore",
+  "quota_fallbacks": 0,
   "keys_available": 2,
   "keys_total": 3
 }
@@ -191,6 +194,9 @@ Cloud Run の scale to zero がそのまま成立する。
 - 503 `no symbols loaded`: symbols.json が空
 - 503 `Gemini is not configured`: API キーが 1 つも設定されていない
 - 503 `all Gemini API keys are rate limited`: 全キーがバックオフ中
+- `quota_backend`: 直近 1 分に Firestore からメモリへ退避していれば `memory`
+- `quota_fallbacks`: 起動以降の累計退避回数。現在値だけを見ると、成功した 1 リクエストに
+  部分障害が隠されるため、こちらを監視対象にする
 
 ---
 

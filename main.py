@@ -64,7 +64,9 @@ DAILY_IP_SALT = os.environ.get("DAILY_IP_SALT", "zukigou-drill")
 # Cloud Run / ロードバランサ配下では X-Forwarded-For の末尾が実クライアント。
 # プロキシを介さず直接公開する場合は "0" にして接続元 IP を使う。
 TRUST_FORWARDED_FOR = os.environ.get("TRUST_FORWARDED_FOR", "1") not in ("0", "false", "False")
-TRUSTED_PROXY_HOPS = max(1, _env_int("TRUSTED_PROXY_HOPS", 1))
+# X-Forwarded-For の末尾から数えて何番目をクライアントとみなすか（1 = 末尾）。
+# 「信頼するプロキシ段数」ではない点に注意（1 は 0 段読み飛ばす、の意味）。
+CLIENT_IP_INDEX_FROM_END = max(1, _env_int("CLIENT_IP_INDEX_FROM_END", 1))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 FEEDBACK_BUCKET = os.environ.get("FEEDBACK_BUCKET", "")
@@ -420,9 +422,12 @@ class QuotaToken(TypedDict):
 
 _quota_memory: dict[str, int] = defaultdict(int)
 _quota_memory_lock = threading.Lock()
-_quota_backend = "firestore"
+# メモリ退避は「今どちらで数えているか」ではなく「いつ・何回退避したか」で監視する。
+# 1 リクエスト成功しただけで firestore に戻る単純なフラグでは、部分障害が隠れてしまう。
+_quota_state_lock = threading.Lock()
+_quota_memory_fallbacks = 0
+_quota_memory_fallback_at = 0.0
 _QUOTA_DEGRADED_LOG_INTERVAL = 60.0
-_quota_memory_degraded_at = [0.0]
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 
@@ -430,36 +435,35 @@ def _quota_day(now: datetime.datetime | None = None) -> str:
     return (now or datetime.datetime.now(datetime.UTC)).astimezone(JST).date().isoformat()
 
 
-def _consume_memory_quota(day: str, field: str, subject_hash: str, limit: int) -> QuotaToken | None:
-    global _quota_backend
-    _quota_backend = "memory"
-    key = f"{day}:{field}:{subject_hash}"
-    local_limit = max(1, limit // MAX_INSTANCES)
-    with _quota_memory_lock:
-        if _quota_memory[key] >= local_limit:
-            return None
-        _quota_memory[key] += 1
-        # Firestore 障害中は全リクエストがここを通るため、ログは一定間隔に間引く。
-        now = time.time()
-        should_log = now - _quota_memory_degraded_at[0] > _QUOTA_DEGRADED_LOG_INTERVAL
-        if should_log:
-            _quota_memory_degraded_at[0] = now
-    if should_log:
-        logger.error("Firestore quota unavailable; using memory quota", extra={"quota": field})
-    return {"backend": "memory", "key": key, "ref": None, "released": False}
+def _note_quota_fallback() -> bool:
+    """メモリ退避を記録し、ログを出すべきかを返す。障害中は全リクエストがここを
+    通るため、ログは `_QUOTA_DEGRADED_LOG_INTERVAL` に 1 回へ間引く。"""
+    global _quota_memory_fallbacks, _quota_memory_fallback_at
+    now = time.time()
+    with _quota_state_lock:
+        should_log = now - _quota_memory_fallback_at > _QUOTA_DEGRADED_LOG_INTERVAL
+        _quota_memory_fallbacks += 1
+        _quota_memory_fallback_at = now
+    return should_log
 
 
-def _consume_daily_quota(field: str, limit: int, subject: str = "global") -> QuotaToken | None:
-    """シャード化した日次枠を予約する。失敗時はトークンで一度だけ解放できる。"""
-    global _quota_backend
-    if limit <= 0:
-        return None
-    day = _quota_day()
+def _quota_status() -> dict[str, Any]:
+    with _quota_state_lock:
+        fallbacks, last = _quota_memory_fallbacks, _quota_memory_fallback_at
+    degraded = bool(last) and time.time() - last < _QUOTA_DEGRADED_LOG_INTERVAL
+    return {"quota_backend": "memory" if degraded else "firestore", "quota_fallbacks": fallbacks}
+
+
+class QuotaTarget(TypedDict):
+    field: str
+    limit: int
+    doc_id: str
+    memory_key: str
+    per_shard: int
+
+
+def _quota_target(day: str, field: str, limit: int, subject: str) -> QuotaTarget:
     subject_hash = hashlib.sha256(f"{subject}|{DAILY_IP_SALT}".encode()).hexdigest()[:16]
-    db = _get_firestore_client()
-    if not db:
-        return _consume_memory_quota(day, field, subject_hash, limit)
-    _quota_backend = "firestore"
     if subject == "global":
         # 全体カウンタは 1 ドキュメントに書き込みが集中するのでシャードへ分散する。
         shard = random.randrange(QUOTA_SHARDS)
@@ -470,25 +474,83 @@ def _consume_daily_quota(field: str, limit: int, subject: str = "global") -> Quo
         # まで縮む（DAILY_IP_LIMIT=50, QUOTA_SHARDS=10 なら 1 IP あたり 5 回/日）。
         shard = 0
         per_shard = limit
-    doc_id = f"{field}-{subject_hash}-{shard}"
-    ref = db.collection("quota").document(day).collection("counters").document(doc_id)
+    return {
+        "field": field,
+        "limit": limit,
+        "doc_id": f"{field}-{subject_hash}-{shard}",
+        "memory_key": f"{day}:{field}:{subject_hash}",
+        "per_shard": per_shard,
+    }
+
+
+def _consume_memory_quotas(targets: list[QuotaTarget]) -> list[QuotaToken] | None:
+    tokens: list[QuotaToken] = []
+    with _quota_memory_lock:
+        for target in targets:
+            key = target["memory_key"]
+            local_limit = max(1, target["limit"] // MAX_INSTANCES)
+            if _quota_memory[key] >= local_limit:
+                # 一部だけ取れた状態を残さない。
+                for token in tokens:
+                    _quota_memory[token["key"]] = max(0, _quota_memory[token["key"]] - 1)
+                return None
+            _quota_memory[key] += 1
+            tokens.append({"backend": "memory", "key": key, "ref": None, "released": False})
+    if _note_quota_fallback():
+        logger.error(
+            "Firestore quota unavailable; using memory quota",
+            extra={"quota": ",".join(target["field"] for target in targets)},
+        )
+    return tokens
+
+
+def _consume_daily_quotas(specs: list[tuple[str, int, str]]) -> list[QuotaToken] | None:
+    """複数の日次枠を 1 トランザクションでまとめて予約する。
+
+    全部取れなければ 1 つも取らない。個別に予約すると、後段が枯渇したときに前段を
+    解放して回る必要があり、その解放が落ちると枠が減ったまま戻らない。
+    """
+    if any(limit <= 0 for _, limit, _ in specs):
+        # 上限 0 は「無制限」ではなく「その枠を閉じる」の意味。
+        return None
+    day = _quota_day()
+    targets = [_quota_target(day, field, limit, subject) for field, limit, subject in specs]
+    db = _get_firestore_client()
+    if not db:
+        return _consume_memory_quotas(targets)
+    counters = db.collection("quota").document(day).collection("counters")
+    refs = [counters.document(target["doc_id"]) for target in targets]
     try:
         transaction = db.transaction()
 
         @firestore.transactional
-        def reserve(tx: Any) -> QuotaToken | None:
-            snapshot = ref.get(transaction=tx)
-            current = snapshot.to_dict().get("count", 0) if snapshot.exists else 0
-            if not isinstance(current, int) or current >= per_shard:
-                return None
+        def reserve(tx: Any) -> list[QuotaToken] | None:
+            # Firestore のトランザクションは全ての読み取りを書き込みより先に行う必要がある。
+            snapshots = [ref.get(transaction=tx) for ref in refs]
+            for snapshot, target in zip(snapshots, targets):
+                current = snapshot.to_dict().get("count", 0) if snapshot.exists else 0
+                if not isinstance(current, int) or current >= target["per_shard"]:
+                    return None
             expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=2)
-            tx.set(ref, {"count": firestore.Increment(1), "expires_at": expires}, merge=True)
-            return {"backend": "firestore", "key": doc_id, "ref": ref, "released": False}
+            for ref in refs:
+                tx.set(ref, {"count": firestore.Increment(1), "expires_at": expires}, merge=True)
+            return [
+                {"backend": "firestore", "key": target["doc_id"], "ref": ref, "released": False}
+                for target, ref in zip(targets, refs)
+            ]
 
         return reserve(transaction)
     except Exception as e:
-        logger.error("Firestore quota failed; retrying with memory quota", extra={"quota": field, "error": str(e)})
-        return _consume_memory_quota(day, field, subject_hash, limit)
+        logger.error(
+            "Firestore quota failed; retrying with memory quota",
+            extra={"quota": ",".join(target["field"] for target in targets), "error": str(e)},
+        )
+        return _consume_memory_quotas(targets)
+
+
+def _consume_daily_quota(field: str, limit: int, subject: str = "global") -> QuotaToken | None:
+    tokens = _consume_daily_quotas([(field, limit, subject)])
+    return tokens[0] if tokens else None
 
 
 def _release_daily_quota(token: QuotaToken | None) -> None:
@@ -683,6 +745,17 @@ def _count_ink_pixels(img: Image.Image) -> int:
     return sum(histogram[:INK_THRESHOLD])
 
 
+def _get_storage_client() -> Any:
+    global _storage_client
+    if _storage_client is None:
+        with _storage_lock:
+            if _storage_client is None:
+                from google.cloud import storage
+
+                _storage_client = storage.Client()
+    return _storage_client
+
+
 def _save_to_gcs(
     bucket_name: str,
     symbol_id: str,
@@ -691,17 +764,10 @@ def _save_to_gcs(
     prefix: str = "judgments",
 ) -> None:
     """GCS にエンドポイントの判定データと画像を保存する。失敗は判定処理に波及させない。"""
-    global _storage_client
     if not bucket_name:
         return
     try:
-        if _storage_client is None:
-            with _storage_lock:
-                if _storage_client is None:
-                    from google.cloud import storage
-
-                    _storage_client = storage.Client()
-        bucket = _storage_client.bucket(bucket_name)
+        bucket = _get_storage_client().bucket(bucket_name)
         day = datetime.date.today().isoformat()
         name = f"{prefix}/{symbol_id}/{day}/{uuid.uuid4().hex}"
         bucket.blob(f"{name}.png").upload_from_string(image, content_type="image/png")
@@ -738,16 +804,13 @@ def _record_judgment(judgment_id: str, symbol_id: str, judgment: dict[str, Any])
 
 
 def _save_pending_feedback(judgment_id: str, image: bytes) -> None:
-    global _storage_client
+    """保留画像を保存する。異議報告より先に必ず完了している必要があるため、
+    バックグラウンドタスクにはしない（Cloud Run は既定でレスポンス後に CPU を絞るので、
+    バックグラウンドの完了時刻を報告 API 側から当てにできない）。失敗は判定に波及させない。"""
     if not FEEDBACK_BUCKET:
         return
     try:
-        if _storage_client is None:
-            with _storage_lock:
-                if _storage_client is None:
-                    from google.cloud import storage
-                    _storage_client = storage.Client()
-        _storage_client.bucket(FEEDBACK_BUCKET).blob(
+        _get_storage_client().bucket(FEEDBACK_BUCKET).blob(
             f"pending/{judgment_id}.png"
         ).upload_from_string(image, content_type="image/png")
     except Exception:
@@ -755,24 +818,30 @@ def _save_pending_feedback(judgment_id: str, image: bytes) -> None:
 
 
 def _promote_feedback(judgment_id: str, record: dict[str, Any]) -> None:
-    """保留画像を disputed へコピーする。失敗は報告APIへ波及させない。"""
+    """報告された判定を disputed/ へ確定させる。失敗は報告APIへ波及させない。
+
+    判定メタデータを先に、画像コピーを後に、それぞれ独立した try で行う。まとめて
+    1 つの try に入れると、保留画像が無いときに copy_blob の例外でメタデータごと
+    失われる（報告は既に disputed 済みでユーザーは再送できない）。
+    """
     if not FEEDBACK_BUCKET:
         return
     try:
-        global _storage_client
-        if _storage_client is None:
-            with _storage_lock:
-                if _storage_client is None:
-                    from google.cloud import storage
-                    _storage_client = storage.Client()
-        bucket = _storage_client.bucket(FEEDBACK_BUCKET)
-        source = bucket.blob(f"pending/{judgment_id}.png")
-        bucket.copy_blob(source, bucket, f"disputed/{judgment_id}.png")
+        bucket = _get_storage_client().bucket(FEEDBACK_BUCKET)
+    except Exception:
+        logger.exception("failed to open feedback bucket", extra={"judgment_id": judgment_id})
+        return
+    try:
         bucket.blob(f"disputed/{judgment_id}.json").upload_from_string(
             json.dumps(record, ensure_ascii=False, default=str), content_type="application/json"
         )
     except Exception:
-        logger.exception("failed to promote disputed feedback", extra={"judgment_id": judgment_id})
+        logger.exception("failed to save disputed judgment record", extra={"judgment_id": judgment_id})
+    try:
+        source = bucket.blob(f"pending/{judgment_id}.png")
+        bucket.copy_blob(source, bucket, f"disputed/{judgment_id}.png")
+    except Exception:
+        logger.exception("failed to copy disputed image", extra={"judgment_id": judgment_id})
 
 
 def _claim_judgment(judgment_id: str) -> tuple[str, dict[str, Any] | None]:
@@ -808,10 +877,20 @@ def _claim_judgment(judgment_id: str) -> tuple[str, dict[str, Any] | None]:
 # docs_url/redoc_url だけを None にしても /openapi.json は既定で公開されるため、
 # openapi_url も明示的に無効化する。
 app = FastAPI(title="KENZU", docs_url=None, redoc_url=None, openapi_url=None)
-_PAGE_CACHE = {
-    name: (ROOT / name).read_text(encoding="utf-8")
-    for name in ("landing.html", "drill.html", "standards.html")
-}
+_page_cache: dict[str, str] = {}
+_page_cache_lock = threading.Lock()
+
+
+def _page_source(name: str) -> str:
+    """初回アクセス時に読み、以後はメモリから返す。import 時にまとめて読むと、
+    HTML が 1 つでも欠けた瞬間にアプリ全体が起動しなくなる。"""
+    cached = _page_cache.get(name)
+    if cached is not None:
+        return cached
+    text = (ROOT / name).read_text(encoding="utf-8")
+    with _page_cache_lock:
+        _page_cache[name] = text
+    return text
 
 
 def _page(name: str, request: Request) -> HTMLResponse:
@@ -824,8 +903,13 @@ def _page(name: str, request: Request) -> HTMLResponse:
     if not valid_host or (parsed.scheme != "https" and not local_http):
         logger.warning("invalid public base URL omitted")
         base_url = ""
-    rendered = _PAGE_CACHE[name].replace("__BASE_URL__", html.escape(base_url, quote=True))
-    return HTMLResponse(rendered, headers={"Cache-Control": "max-age=60, must-revalidate"})
+    rendered = _page_source(name).replace("__BASE_URL__", html.escape(base_url, quote=True))
+    # PUBLIC_BASE_URL 未設定時はボディが Host 依存になるので、共有キャッシュに
+    # 他ホスト向けの OG URL を配らせない。
+    return HTMLResponse(
+        rendered,
+        headers={"Cache-Control": "private, max-age=60, must-revalidate", "Vary": "Host"},
+    )
 
 
 @app.exception_handler(404)
@@ -835,7 +919,7 @@ async def not_found(request: Request, exc: Exception) -> Response:
         detail = getattr(exc, "detail", "not found")
         return JSONResponse({"detail": detail}, status_code=404)
     del exc
-    html = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+    page = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>404 — 配線用図記号ドリル</title><link rel="stylesheet" href="/theme.css"></head>
 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;text-align:center">
@@ -843,7 +927,7 @@ async def not_found(request: Request, exc: Exception) -> Response:
 <p style="font-size:44px;font-weight:700;color:var(--primary);font-family:var(--mono)">404</p>
 <p style="font-size:13px;color:var(--on-surface-variant);margin:12px 0 20px;line-height:1.7">この図面番号のページは存在しません。</p>
 <a class="btn btn-primary" href="/" style="display:inline-block;text-decoration:none">表紙へ戻る</a></div></body></html>"""
-    return HTMLResponse(html, status_code=404)
+    return HTMLResponse(page, status_code=404)
 
 
 _hits: dict[str, deque[float]] = defaultdict(deque)
@@ -867,15 +951,16 @@ def _client_ip(request: Request) -> str:
         if forwarded:
             candidates = [value.strip() for value in forwarded.split(",") if value.strip()]
             if candidates:
-                # 信頼するリバースプロキシの段数だけ右から読み飛ばせる。構成変更時は
-                # TRUSTED_PROXY_HOPS も同時に見直すこと。
-                if len(candidates) < TRUSTED_PROXY_HOPS:
+                # CLIENT_IP_INDEX_FROM_END は「末尾から数えて何番目か」で、段数ではない。
+                # `a, b, c` なら 1 で c、2 で b。前段にプロキシを 1 つ足したら +1 する。
+                # 大きくしすぎるとクライアントが自分で入れた値を掴むので注意。
+                if len(candidates) < CLIENT_IP_INDEX_FROM_END:
                     logger.warning(
-                        "x-forwarded-for shorter than TRUSTED_PROXY_HOPS",
-                        extra={"hops": TRUSTED_PROXY_HOPS, "received": len(candidates)},
+                        "x-forwarded-for shorter than CLIENT_IP_INDEX_FROM_END",
+                        extra={"index": CLIENT_IP_INDEX_FROM_END, "received": len(candidates)},
                     )
                     return candidates[-1]
-                return candidates[-TRUSTED_PROXY_HOPS]
+                return candidates[-CLIENT_IP_INDEX_FROM_END]
     return request.client.host if request.client else "unknown"
 
 
@@ -1016,12 +1101,11 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
     if not symbol or not symbol.get("verified"):
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
-    ip_token = _consume_daily_quota("ip_calls", DAILY_IP_LIMIT, _client_ip(request))
-    if not ip_token:
-        raise HTTPException(429, "daily_quota_exceeded")
-    global_token = _consume_daily_quota("judge_calls", DAILY_JUDGE_LIMIT)
-    if not global_token:
-        _release_daily_quota(ip_token)
+    quota_tokens = _consume_daily_quotas([
+        ("ip_calls", DAILY_IP_LIMIT, _client_ip(request)),
+        ("judge_calls", DAILY_JUDGE_LIMIT, "global"),
+    ])
+    if not quota_tokens:
         raise HTTPException(429, "daily_quota_exceeded")
 
     required_features: list[str] = symbol["required_features"]
@@ -1052,8 +1136,8 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
             image, prompt, req.symbol_id, len(required_features), len(forbidden_features)
         )
     except Exception:
-        _release_daily_quota(global_token)
-        _release_daily_quota(ip_token)
+        for token in quota_tokens:
+            _release_daily_quota(token)
         raise
 
     checks: list[dict[str, Any]] = []
@@ -1105,13 +1189,15 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
         "ref_svg": symbol.get("ref_svg", ""),
         "judgment_id": judgment_id,
     }
+    # 保留画像は同期で上げる。バックグラウンドにすると、直後の異議報告が
+    # アップロードを追い越して画像を取りこぼす（_save_pending_feedback 参照）。
     if FEEDBACK_BUCKET and _record_judgment(judgment_id, req.symbol_id, judgment_data):
-        background.add_task(_save_pending_feedback, judgment_id, image)
+        _save_pending_feedback(judgment_id, image)
     return response_data
 
 
 @app.post("/api/report")
-def report(req: ReportRequest, request: Request, background: BackgroundTasks) -> dict[str, bool]:
+def report(req: ReportRequest, request: Request) -> dict[str, bool]:
     _check_rate(request)
     if not FEEDBACK_BUCKET:
         raise HTTPException(503, "report_disabled")
@@ -1120,7 +1206,9 @@ def report(req: ReportRequest, request: Request, background: BackgroundTasks) ->
         logger.warning("feedback report rejected", extra={"reason": status})
         raise HTTPException({"replayed": 409, "unavailable": 503}.get(status, 404), status)
     if record:
-        background.add_task(_promote_feedback, req.judgment_id, record)
+        # 報告は既に disputed 済みでユーザーは再送できない。バックグラウンドにすると
+        # Cloud Run の CPU スロットリングで保存が落ちても誰も気付けないので同期で行う。
+        _promote_feedback(req.judgment_id, record)
     return {"ok": True}
 
 
@@ -1144,7 +1232,7 @@ def readyz() -> dict[str, Any]:
         "symbols": len(SYMBOLS),
         "feedback_enabled": bool(FEEDBACK_BUCKET),
         "report_enabled": bool(FEEDBACK_BUCKET and _get_firestore_client() is not None),
-        "quota_backend": _quota_backend,
+        **_quota_status(),
         "keys_available": len(available),
         "keys_total": len(keys),
     }

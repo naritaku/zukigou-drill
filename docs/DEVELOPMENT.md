@@ -66,21 +66,39 @@ uvicorn main:app --host 0.0.0.0 --port 8080
   Cloud Run やロードバランサ配下ではこれが必要（TCP 接続元はプロキシになるため、
   無効にすると全ユーザーが 1 つのレート制限バケットを共有してしまう）。
   プロキシを介さず直接公開する場合のみ `0` にする。
-- `TRUSTED_PROXY_HOPS`: 既定 1。信頼するプロキシ段数。ロードバランサーを追加・変更した
-  場合はXFFの付与規則を確認して必ず見直す。
+- `CLIENT_IP_INDEX_FROM_END`: 既定 1。`X-Forwarded-For`の**末尾から数えて何番目**を
+  クライアントとみなすか。「プロキシ段数」ではない点に注意（`a, b, c`なら`1`で`c`、`2`で`b`）。
+  前段にロードバランサーを1つ足したら`2`にする。大きくしすぎるとクライアントが自分で入れた
+  値を掴み、IP別クォータを回避されるので、XFFの付与規則を確認してから変更する。
 - `PUBLIC_BASE_URL`: 任意。OGメタタグに使う公開URL。設定時はHostヘッダーより優先する。
 
 IPレート制限は意図的にインスタンスローカルであり、最大2インスタンスでは単一IPが実質最大
 40回/分まで通りうる。厳密な日次防護はFirestoreのIP・全体カウンタが担当する。カウンタは
 全体カウンタのみ10シャードへ分散するため上限にはシャード数程度の誤差を許容し、
 厳密な会計より課金額の桁を抑えることを優先する。Firestore障害時はプロセスメモリへ切り替え、上限を`MAX_INSTANCES`で
-割る。`/readyz`の`quota_backend`とERRORログで切り替えを監視できる。
+割る。`/readyz`の`quota_backend`（直近1分に退避があれば`memory`）と`quota_fallbacks`
+（累計退避回数）で切り替えを監視できる。単なる現在値ではなく累計回数を見ることで、
+成功したリクエスト1件に隠される部分障害も検出できる。
+
+IP枠と全体枠は**1トランザクションでまとめて**予約する。個別に取ると、後段が枯渇したときに
+前段を解放して回る必要があり、その解放が落ちると枠が減ったまま戻らない。
 
 同期エンドポイントはanyio既定40スレッドを共有し、GeminiとFirestore I/Oの間スレッドを占有する。
 concurrency 20 × max-instances 2 = 最大40並行とし、各インスタンスで20スレッド分の余裕を残す。
+`/api/judge` 1回あたりのFirestore往復は、クォータ予約（1トランザクション）＋判定レコード書き込み
+＋レート制限のキャッシュミス時の読み取り。Gemini呼び出しに比べれば小さいが、増やすときは
+このスレッド予算を意識する。
 
 異議報告は短命な`judgments/{judgment_id}`をトランザクションで一度だけdisputedへ遷移させる。
 Firestore TTLポリシーを`judgments.expires_at`と`quota/*/counters.expires_at`へ設定すること。
+
+保留画像の保存（`/api/judge`）と`disputed/`への昇格（`/api/report`）は**同期で行う**。
+Cloud Runは既定でレスポンス送出後にCPUを絞るため、`BackgroundTasks`の完了時刻を別のAPIから
+当てにできない。バックグラウンドにすると、報告が保留画像のアップロードを追い越したり、
+昇格処理自体が落ちたまま気付けなかったりする（報告は既にdisputed済みで再送できない）。
+`ALL_JUDGMENTS_BUCKET`への全判定保存だけは品質監視用のベストエフォートなので
+バックグラウンドのままにしてある。取りこぼしを許容できないなら
+`--no-cpu-throttling`（課金はインスタンス生存中ずっとCPU分が乗る）を検討する。
 
 **注意**: 報告APIは画像を受け取らないため、`FEEDBACK_BUCKET`設定時は**異議の有無に関わらず
 全判定の画像**が`pending/{judgment_id}.png`へ保存される（報告されたものだけが`disputed/`へ
@@ -324,7 +342,7 @@ gcloud run deploy zukigou-drill --source . \
   --project zukigou-drill-dojo --region asia-northeast1 \
   --allow-unauthenticated --max-instances 2 --concurrency 20 \
   --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GEMINI_PAID_API_KEY=GEMINI_PAID_API_KEY:latest,DAILY_IP_SALT=DAILY_IP_SALT:latest" \
-  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60|DAILY_JUDGE_LIMIT=1000|DAILY_PAID_LIMIT=100|DAILY_IP_LIMIT=50|QUOTA_SHARDS=10|MAX_INSTANCES=2|PUBLIC_BASE_URL=https://zukigou-drill-dojo.run.app/|TRUSTED_PROXY_HOPS=1|JUDGMENT_RECORD_TTL=3600"
+  --set-env-vars "^|^GEMINI_MODELS_FREE=gemini-3.1-flash-lite,gemini-3.5-flash|GEMINI_MODELS_PAID=gemini-3.1-flash-lite,gemini-3.5-flash|RATE_LIMIT=20|RATE_WINDOW=60|DAILY_JUDGE_LIMIT=1000|DAILY_PAID_LIMIT=100|DAILY_IP_LIMIT=50|QUOTA_SHARDS=10|MAX_INSTANCES=2|PUBLIC_BASE_URL=https://zukigou-drill-dojo.run.app/|CLIENT_IP_INDEX_FROM_END=1|JUDGMENT_RECORD_TTL=3600"
 
 # 疎通確認（/healthz は Google のフロントエンドが握るため 404 になる。/readyz を見る）
 curl -fsS https://zukigou-drill-vnoxzmytga-an.a.run.app/readyz

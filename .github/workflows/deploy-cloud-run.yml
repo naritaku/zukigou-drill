@@ -43,8 +43,8 @@ on:
         description: Canonical public URL
         required: false
         default: "https://zukigou-drill-dojo.run.app/"
-      trusted_proxy_hops:
-        description: Trusted X-Forwarded-For hops
+      client_ip_index_from_end:
+        description: Which X-Forwarded-For entry is the client, counted from the end (1 = last)
         required: false
         default: "1"
       judgment_record_ttl:
@@ -120,7 +120,7 @@ jobs:
 
       - name: Validate numeric inputs
         env:
-          VALUES: "${{ inputs.max_instances }} ${{ inputs.concurrency }} ${{ inputs.rate_limit }} ${{ inputs.rate_window }} ${{ inputs.daily_judge_limit }} ${{ inputs.daily_paid_limit }} ${{ inputs.daily_ip_limit }} ${{ inputs.quota_shards }} ${{ inputs.trusted_proxy_hops }} ${{ inputs.judgment_record_ttl }}"
+          VALUES: "${{ inputs.max_instances }} ${{ inputs.concurrency }} ${{ inputs.rate_limit }} ${{ inputs.rate_window }} ${{ inputs.daily_judge_limit }} ${{ inputs.daily_paid_limit }} ${{ inputs.daily_ip_limit }} ${{ inputs.quota_shards }} ${{ inputs.client_ip_index_from_end }} ${{ inputs.judgment_record_ttl }}"
         run: |
           for value in $VALUES; do
             [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::Invalid numeric input: $value"; exit 1; }
@@ -142,7 +142,7 @@ jobs:
             --max-instances "${{ inputs.max_instances }}" \
             --concurrency "${{ inputs.concurrency }}" \
             --set-secrets "${{ steps.secrets.outputs.mappings }}" \
-            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|DAILY_IP_LIMIT=${{ inputs.daily_ip_limit }}|QUOTA_SHARDS=${{ inputs.quota_shards }}|MAX_INSTANCES=${{ inputs.max_instances }}|PUBLIC_BASE_URL=${{ inputs.public_base_url }}|TRUSTED_PROXY_HOPS=${{ inputs.trusted_proxy_hops }}|JUDGMENT_RECORD_TTL=${{ inputs.judgment_record_ttl }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
+            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|DAILY_IP_LIMIT=${{ inputs.daily_ip_limit }}|QUOTA_SHARDS=${{ inputs.quota_shards }}|MAX_INSTANCES=${{ inputs.max_instances }}|PUBLIC_BASE_URL=${{ inputs.public_base_url }}|CLIENT_IP_INDEX_FROM_END=${{ inputs.client_ip_index_from_end }}|JUDGMENT_RECORD_TTL=${{ inputs.judgment_record_ttl }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
 
       - name: Verify health endpoints
         run: |
