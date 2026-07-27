@@ -1,0 +1,6 @@
+{
+  "symbol_id": "interphone_master",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "電話機形インターホン親機 のお手本 SVG をそのまま描画した理想解答"
+}

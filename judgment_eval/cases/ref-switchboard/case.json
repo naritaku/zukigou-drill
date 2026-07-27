@@ -1,0 +1,6 @@
+{
+  "symbol_id": "switchboard",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "配電盤 のお手本 SVG をそのまま描画した理想解答"
+}

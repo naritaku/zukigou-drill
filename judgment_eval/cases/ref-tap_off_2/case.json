@@ -1,0 +1,6 @@
+{
+  "symbol_id": "tap_off_2",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "2分岐器 のお手本 SVG をそのまま描画した理想解答"
+}

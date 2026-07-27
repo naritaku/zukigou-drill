@@ -1,0 +1,6 @@
+{
+  "symbol_id": "telephone_outlet",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "通信用アウトレット(電話用) のお手本 SVG をそのまま描画した理想解答"
+}

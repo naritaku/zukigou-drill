@@ -1,0 +1,6 @@
+{
+  "symbol_id": "switching_hub",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "集線装置(ハブ) のお手本 SVG をそのまま描画した理想解答"
+}

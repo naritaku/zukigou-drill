@@ -1,0 +1,6 @@
+{
+  "symbol_id": "indicator_lamp",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "表示灯 のお手本 SVG をそのまま描画した理想解答"
+}

@@ -1,0 +1,6 @@
+{
+  "symbol_id": "router",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "ルータ のお手本 SVG をそのまま描画した理想解答"
+}

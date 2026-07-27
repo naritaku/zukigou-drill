@@ -25,6 +25,9 @@
   - jsonとしてのルールに則れていること
   - 図記号と判断基準に矛盾がないこと
     - 図記号、説明を変更した場合は`standards.html`の該当する図記号と説明をスクショしてスクショを分析すること
+  - `symbols.json`の`required_features`/`forbidden_features`/`ref_svg`を変更した場合
+    - `python3 scripts/render_eval_cases.py --symbol <id>`でお手本ケースを再生成
+    - `python3 scripts/run_judgment_eval.py --symbol <id>`で判定精度が落ちていないこと（[docs/EVALUATION.md](docs/EVALUATION.md)）
 
 - html/cssの変更
   - 変更点をスクショして期待している見た目になっていること

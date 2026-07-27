@@ -1,0 +1,6 @@
+{
+  "symbol_id": "doorphone",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "ドアホン のお手本 SVG をそのまま描画した理想解答"
+}

@@ -1,0 +1,6 @@
+{
+  "symbol_id": "distribution_board",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "分電盤 のお手本 SVG をそのまま描画した理想解答"
+}
