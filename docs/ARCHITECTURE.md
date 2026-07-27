@@ -64,7 +64,9 @@ Cloud Run の scale to zero がそのまま成立する。
 
 ### GET /api/symbols
 
-収録記号の一覧（`id` / `name` / `category` / `verified`）。`verified: false` も含む。
+収録記号の一覧（`id` / `name` / `category` / `verified`）。`verified: true` のものだけを返す。
+未検証の記号は出題も判定もされないため、一覧にも出さない（`verified` フィールド自体は、
+利用側が検証済みかどうかを明示的に確認できるよう残してある）。
 
 ### GET /api/question
 

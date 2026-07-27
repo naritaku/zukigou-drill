@@ -70,7 +70,8 @@
 - **電気時計設備** 3 (`slave_clock`, `master_clock`, ...)
 - **映像設備** 1 (`screen`)
 
-合計: 54 記号（`verified: true` のみ出題）。最新の内訳は `GET /api/symbols` が正本。
+合計: 54 記号（`verified: true` のみ出題）。最新の内訳は `GET /api/symbols` が正本
+（同 API は `verified: true` のみを返す）。
 
 ### 対応環境
 

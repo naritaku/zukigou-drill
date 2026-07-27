@@ -67,6 +67,9 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
         symbol_id = symbol.get("id")
         required_features = symbol.get("required_features")
         forbidden_features = symbol.get("forbidden_features", [])
+        name = symbol.get("name")
+        category = symbol.get("category")
+        verified = symbol.get("verified")
         if not isinstance(symbol_id, str) or not symbol_id:
             raise RuntimeError(f"symbols[{index}].id is invalid")
         if symbol_id in result:
@@ -75,6 +78,14 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
             raise RuntimeError(f"symbol {symbol_id} must have non-empty required_features")
         if not isinstance(forbidden_features, list) or not all(isinstance(v, str) and v for v in forbidden_features):
             raise RuntimeError(f"symbol {symbol_id} has invalid forbidden_features")
+        # /api/symbols と /api/catalog が添字アクセスする項目。ここで検証しておかないと
+        # 欠損に気付くのが起動後のリクエスト時（500）になる。
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError(f"symbol {symbol_id} has invalid name")
+        if not isinstance(category, str) or not category.strip():
+            raise RuntimeError(f"symbol {symbol_id} has invalid category")
+        if not isinstance(verified, bool):
+            raise RuntimeError(f"symbol {symbol_id} has invalid verified")
         result[symbol_id] = symbol
 
     if not any(bool(symbol.get("verified")) for symbol in result.values()):
@@ -703,7 +714,7 @@ def catalog() -> list[dict[str, Any]]:
 def list_symbols() -> list[dict[str, Any]]:
     return [
         {"id": s["id"], "name": s["name"], "category": s["category"], "verified": s["verified"]}
-        for s in SYMBOLS.values()
+        for s in SYMBOLS.values() if s["verified"]
     ]
 
 
@@ -725,7 +736,9 @@ def question() -> dict[str, Any]:
 def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> dict[str, Any]:
     _check_rate(request)
     symbol = SYMBOLS.get(req.symbol_id)
-    if not symbol:
+    # 未検証の記号は出題も一覧もされない。判定だけ通ると、検証前の判定基準で
+    # 採点した結果を利用者に返してしまう。
+    if not symbol or not symbol["verified"]:
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
 

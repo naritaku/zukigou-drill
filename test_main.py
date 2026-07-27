@@ -1269,14 +1269,25 @@ class EndpointSmokeTest(unittest.TestCase):
         self.assertEqual(ids, verified_ids)
         self.assertIn("ref_svg", data[0])
 
-    def test_symbols_lists_all(self):
+    def test_symbols_lists_only_verified(self):
         data = self.client.get("/api/symbols").json()
-        self.assertEqual(len(data), len(main.SYMBOLS))
+        self.assertEqual({s["id"] for s in data}, {s["id"] for s in main.SYMBOLS.values() if s["verified"]})
 
     def test_question_returns_verified_symbol(self):
         body = self.client.get("/api/question").json()
         self.assertIn(body["id"], main.SYMBOLS)
         self.assertTrue(main.SYMBOLS[body["id"]]["verified"])
+
+    def test_unverified_symbol_is_not_judgeable_or_listed(self):
+        unverified = {**next(s for s in main.SYMBOLS.values() if s["verified"]),
+                      "id": "unverified-test", "verified": False}
+        with patch.dict(main.SYMBOLS, {unverified["id"]: unverified}, clear=True):
+            judged = self.client.post("/api/judge", json={
+                "symbol_id": unverified["id"], "image_b64": inked_png_b64(),
+            })
+            listed = self.client.get("/api/symbols").json()
+        self.assertEqual(judged.status_code, 404)
+        self.assertEqual(listed, [])
 
     def test_question_includes_description(self):
         """判定後の解説表示に使うため、出題レスポンスに description を含める。"""
@@ -1367,6 +1378,19 @@ class LoadSymbolsValidationTest(unittest.TestCase):
     def test_rejects_invalid_forbidden_features(self):
         with self.assertRaises(RuntimeError):
             self._run_with({"symbols": [self._ok_symbol(forbidden_features=[""])]})
+
+    def test_rejects_invalid_catalog_fields(self):
+        # verified="yes" は従来の bool() 判定なら truthy で通っていた。
+        for field, value in (("name", ""), ("category", None), ("verified", "yes")):
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                self._run_with({"symbols": [self._ok_symbol(**{field: value})]})
+
+    def test_rejects_missing_catalog_fields(self):
+        for field in ("name", "category", "verified"):
+            symbol = self._ok_symbol()
+            del symbol[field]
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                self._run_with({"symbols": [symbol]})
 
 
 class FirestoreResilienceTest(unittest.TestCase):
