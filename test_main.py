@@ -789,7 +789,7 @@ class GenerateVisionResultTest(unittest.TestCase):
 
         with patch.object(main, "_gemini_api_keys", return_value=[]):
             with self.assertRaises(HTTPException) as ctx:
-                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
             self.assertEqual(ctx.exception.status_code, 503)
 
     def test_generate_vision_result_valid_response(self):
@@ -814,7 +814,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 2, 2)
 
         self.assertIsInstance(result, main.VisionResult)
         self.assertEqual(result.required, [True, False])
@@ -846,7 +846,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "fallback succeeded")
         self.assertEqual(fake_client.models.generate_content.call_count, 2)
@@ -878,7 +878,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "fallback to paid succeeded")
         paid_client.models.generate_content.assert_called_once()
@@ -908,7 +908,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "valid response")
 
@@ -945,7 +945,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "paid key succeeded")
         # free-key がレート制限に記録されたか確認
@@ -998,7 +998,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "paid key only")
         # free_client は呼び出されていないはず
@@ -1018,7 +1018,7 @@ class GenerateVisionResultTest(unittest.TestCase):
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
             with self.assertRaises(HTTPException) as ctx:
-                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
             self.assertEqual(ctx.exception.status_code, 503)
 
 
@@ -1521,6 +1521,26 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertIsNotNone(token)
         self.assertTrue(token["key"].endswith("-0"))
 
+    def test_firestore_outage_reports_503_not_expired_404(self):
+        # サーバー側障害を 404 で返すと、フロントが「報告期限が切れています」と
+        # 誤って表示してしまう。
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            response = self.client.post("/api/report", json={"judgment_id": "f" * 32})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "unavailable")
+
+    def test_claim_judgment_transaction_failure_is_unavailable(self):
+        db = Mock()
+        db.transaction.side_effect = RuntimeError("firestore down")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            self.assertEqual(main._claim_judgment("f" * 32), ("unavailable", None))
+
+    def test_generate_vision_result_requires_expected_feature_counts(self):
+        # 既定値で長さ検証を素通りできると、_flag_at が IndexError を投げる。
+        with self.assertRaises(TypeError):
+            main._generate_vision_result(b"png", "prompt", self.symbol["id"])
+
     def test_paid_quota_is_released_when_no_model_is_configured(self):
         paid_token = {"backend": "memory", "key": "paid", "ref": None, "released": False}
         with patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
@@ -1528,7 +1548,7 @@ class ReviewRegressionTest(unittest.TestCase):
              patch.object(main, "_gemini_models", return_value=[]), \
              patch.object(main, "_release_daily_quota") as release:
             with self.assertRaises(HTTPException):
-                main._generate_vision_result(b"png", "prompt", self.symbol["id"])
+                main._generate_vision_result(b"png", "prompt", self.symbol["id"], 1, 0)
         release.assert_called_once_with(paid_token)
 
     def test_failed_gemini_releases_ip_and_global_reservations(self):

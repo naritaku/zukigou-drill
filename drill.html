@@ -492,7 +492,8 @@ $("dispute").onclick = async () => {
     else {
       const detail = (await res.json().catch(() => ({}))).detail;
       d.textContent = detail === "replayed" ? "この判定は報告済みです" :
-        detail === "expired" || detail === "unknown" ? "報告期限が切れています" : "報告に失敗しました";
+        detail === "expired" || detail === "unknown" ? "報告期限が切れています" :
+        detail === "unavailable" ? "時間をおいて再度お試しください" : "報告に失敗しました";
     }
   } catch { d.textContent = "報告に失敗しました"; }
 };

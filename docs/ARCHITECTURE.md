@@ -152,10 +152,14 @@ Cloud Run の scale to zero がそのまま成立する。
 
 | ステータス | `detail` | 発生条件 |
 |---|---|---|
-| 404 | `unknown` | `judgment_id` が存在しない、または Firestore を参照できない |
+| 404 | `unknown` | `judgment_id` が存在しない |
 | 404 | `expired` | `JUDGMENT_RECORD_TTL` を過ぎた判定 |
 | 409 | `replayed` | 同じ `judgment_id` で既に報告済み |
 | 503 | `report_disabled` | `FEEDBACK_BUCKET` 未設定 |
+| 503 | `unavailable` | Firestore を参照できない（サーバー側障害） |
+
+サーバー側障害は `unavailable` として 404 と分ける。利用者起因の `unknown` /
+`expired` と混ぜると、障害中に「報告期限が切れています」と誤って見せてしまう。
 
 ### GET /healthz
 

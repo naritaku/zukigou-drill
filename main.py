@@ -511,9 +511,11 @@ def _generate_vision_result(
     image: bytes,
     prompt: str,
     symbol_id: str,
-    required_count: int | None = None,
-    forbidden_count: int | None = None,
+    required_count: int,
+    forbidden_count: int,
 ) -> VisionResult:
+    """期待する特徴数を必ず受け取る。長さが合わない応答は次候補へ回し、
+    呼び出し側（_flag_at）が添字を安全に使えることを保証する。"""
     api_keys = _gemini_api_keys()
     if not api_keys:
         raise HTTPException(503, "judgment service is not configured")
@@ -569,8 +571,8 @@ def _generate_vision_result(
                     ),
                 )
                 result = VisionResult.model_validate_json(response.text or "")
-                if ((required_count is not None and len(result.required) != required_count)
-                        or (forbidden_count is not None and len(result.forbidden) != forbidden_count)):
+                if (len(result.required) != required_count
+                        or len(result.forbidden) != forbidden_count):
                     raise ValueError("Gemini feature array length mismatch")
                 _mark_key_succeeded(api_key)
                 key_succeeded = True
@@ -774,10 +776,12 @@ def _promote_feedback(judgment_id: str, record: dict[str, Any]) -> None:
 
 
 def _claim_judgment(judgment_id: str) -> tuple[str, dict[str, Any] | None]:
-    """異議報告を一度だけ受理する。戻り値は ok / unknown / expired / replayed。"""
+    """異議報告を一度だけ受理する。戻り値は ok / unknown / expired / replayed /
+    unavailable。サーバー側の障害（unavailable）は、利用者の入力起因である
+    unknown / expired と混ぜない。ユーザーに「期限切れ」と誤って見せてしまう。"""
     db = _get_firestore_client()
     if not db:
-        return "unknown", None
+        return "unavailable", None
     ref = db.collection("judgments").document(judgment_id)
     try:
         transaction = db.transaction()
@@ -798,7 +802,7 @@ def _claim_judgment(judgment_id: str) -> tuple[str, dict[str, Any] | None]:
         return claim(transaction)
     except Exception:
         logger.exception("failed to claim judgment", extra={"judgment_id": judgment_id})
-        return "unknown", None
+        return "unavailable", None
 
 
 # docs_url/redoc_url だけを None にしても /openapi.json は既定で公開されるため、
@@ -914,8 +918,10 @@ class VisionResult(BaseModel):
         return value
 
 
-
 def _flag_at(values: list[bool], index: int) -> bool:
+    # 添字が範囲内であることは _generate_vision_result の長さ検証が保証する。
+    # 欠けた要素を False で埋めると、Gemini が答えていない項目を「不合格」として
+    # 利用者に見せてしまうため、ここでは黙って補わない。
     return values[index]
 
 
@@ -1112,9 +1118,8 @@ def report(req: ReportRequest, request: Request, background: BackgroundTasks) ->
     status, record = _claim_judgment(req.judgment_id)
     if status != "ok":
         logger.warning("feedback report rejected", extra={"reason": status})
-        code = 409 if status == "replayed" else 404
-        raise HTTPException(code, status)
-    if FEEDBACK_BUCKET and record:
+        raise HTTPException({"replayed": 409, "unavailable": 503}.get(status, 404), status)
+    if record:
         background.add_task(_promote_feedback, req.judgment_id, record)
     return {"ok": True}
 
