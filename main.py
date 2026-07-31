@@ -101,6 +101,8 @@ def _load_symbols() -> dict[str, dict[str, Any]]:
             raise RuntimeError(f"symbol {symbol_id} must have non-empty required_features")
         if not isinstance(forbidden_features, list) or not all(isinstance(v, str) and v for v in forbidden_features):
             raise RuntimeError(f"symbol {symbol_id} has invalid forbidden_features")
+        # /api/symbols と /api/catalog が添字アクセスする項目。ここで検証しておかないと
+        # 欠損に気付くのが起動後のリクエスト時（500）になる。
         if not isinstance(name, str) or not name.strip():
             raise RuntimeError(f"symbol {symbol_id} has invalid name")
         if not isinstance(category, str) or not category.strip():
@@ -1098,7 +1100,9 @@ def question() -> dict[str, Any]:
 def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> dict[str, Any]:
     _check_rate(request)
     symbol = SYMBOLS.get(req.symbol_id)
-    if not symbol or not symbol.get("verified"):
+    # 未検証の記号は出題も一覧もされない。判定だけ通ると、検証前の判定基準で
+    # 採点した結果を利用者に返してしまう。
+    if not symbol or not symbol["verified"]:
         raise HTTPException(404, "unknown symbol")
     image = _decode_png(req.image_b64)
     quota_tokens = _consume_daily_quotas([
