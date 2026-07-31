@@ -1,0 +1,33 @@
+name: Test
+
+# 本番と同じ Python 3.12 で、依存を空から入れ直して走らせる。ローカル（3.13 の venv）
+# では再現できないのはこの 2 点だけなので、CI がやることもこの 2 点に絞る。
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          # 本番の Dockerfile が python:3.12-slim のため揃える
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt -r dev-requirements.txt
+
+      - name: Lint
+        run: python3 -m ruff check .
+
+      - name: Run tests
+        run: python3 -m unittest
