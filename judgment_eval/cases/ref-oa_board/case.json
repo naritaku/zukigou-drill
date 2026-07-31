@@ -1,0 +1,6 @@
+{
+  "symbol_id": "oa_board",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "OA盤 のお手本 SVG をそのまま描画した理想解答"
+}

@@ -1130,27 +1130,25 @@ def question() -> dict[str, Any]:
     }
 
 
-@app.post("/api/judge")
-def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> dict[str, Any]:
-    _check_rate(request)
-    symbol = SYMBOLS.get(req.symbol_id)
-    # 未検証の記号は出題も一覧もされない。判定だけ通ると、検証前の判定基準で
-    # 採点した結果を利用者に返してしまう。
-    if not symbol or not symbol["verified"]:
-        raise HTTPException(404, "unknown symbol")
-    image = _decode_png(req.image_b64)
-    quota_tokens = _consume_daily_quotas([
-        ("ip_calls", DAILY_IP_LIMIT, _client_ip(request)),
-        ("judge_calls", DAILY_JUDGE_LIMIT, "global"),
-    ])
-    if not quota_tokens:
-        raise HTTPException(429, "daily_quota_exceeded")
+def build_vision_prompt(symbol: dict[str, Any], *, blind: bool = False) -> str:
+    """Gemini に渡す観察プロンプトを組み立てる。
 
+    `blind=True` は記号名を伏せた対照条件。「課題は〇〇です」と正解を先に教えると
+    確証バイアスが乗る可能性があるため、評価ハーネス(scripts/run_judgment_eval.py)が
+    通常条件と A/B して影響を測れるようにしてある。本番の /api/judge は常に
+    `blind=False`（本番と同じ文面で評価するために、この関数を共有する）。
+    """
     required_features: list[str] = symbol["required_features"]
     forbidden_features: list[str] = symbol.get("forbidden_features", [])
 
-    prompt = f"""あなたは施工図の図記号を厳密に識別する採点補助です。
-画像は受験者が手描きした電気設備の図記号で、課題は「{symbol['name']}」です。
+    subject = (
+        "画像は受験者が手描きした電気設備の図記号です。"
+        if blind
+        else f"画像は受験者が手描きした電気設備の図記号で、課題は「{symbol['name']}」です。"
+    )
+
+    return f"""あなたは施工図の図記号を厳密に識別する採点補助です。
+{subject}
 
 判定方針:
 - 線の多少の歪み、傾き、太さ、位置ずれは許容する。
@@ -1169,14 +1167,15 @@ def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> d
 
 observationには、最も重要な根拠を日本語で簡潔に記述してください。"""
 
-    try:
-        result = _generate_vision_result(
-            image, prompt, req.symbol_id, len(required_features), len(forbidden_features)
-        )
-    except Exception:
-        for token in quota_tokens:
-            _release_daily_quota(token)
-        raise
+
+def score_observation(symbol: dict[str, Any], result: VisionResult) -> dict[str, Any]:
+    """観察結果から合否・チェック一覧・不足特徴を決定的に算出する。
+
+    Gemini は特徴の観察だけを担い、合否はここで決める。評価ハーネスも本番と
+    同じ採点を通すために、この関数を共有する。
+    """
+    required_features: list[str] = symbol["required_features"]
+    forbidden_features: list[str] = symbol.get("forbidden_features", [])
 
     checks: list[dict[str, Any]] = []
     for index, feature in enumerate(required_features):
@@ -1196,8 +1195,46 @@ observationには、最も重要な根拠を日本語で簡潔に記述してく
     mistakes += [f"対象外の特徴を検出: {value}" for value in hit_forbidden]
 
     n_ok = sum(check["ok"] for check in checks)
-    passed = n_ok == len(checks)
-    score = f"{n_ok}/{len(checks)}"
+    return {
+        "passed": n_ok == len(checks),
+        "score": f"{n_ok}/{len(checks)}",
+        "checks": checks,
+        "mistakes": mistakes,
+    }
+
+
+@app.post("/api/judge")
+def judge(req: JudgeRequest, request: Request, background: BackgroundTasks) -> dict[str, Any]:
+    _check_rate(request)
+    symbol = SYMBOLS.get(req.symbol_id)
+    # 未検証の記号は出題も一覧もされない。判定だけ通ると、検証前の判定基準で
+    # 採点した結果を利用者に返してしまう。
+    if not symbol or not symbol["verified"]:
+        raise HTTPException(404, "unknown symbol")
+    image = _decode_png(req.image_b64)
+    quota_tokens = _consume_daily_quotas([
+        ("ip_calls", DAILY_IP_LIMIT, _client_ip(request)),
+        ("judge_calls", DAILY_JUDGE_LIMIT, "global"),
+    ])
+    if not quota_tokens:
+        raise HTTPException(429, "daily_quota_exceeded")
+
+    try:
+        result = _generate_vision_result(
+            image,
+            build_vision_prompt(symbol),
+            req.symbol_id,
+            len(symbol["required_features"]),
+            len(symbol.get("forbidden_features", [])),
+        )
+    except Exception:
+        for token in quota_tokens:
+            _release_daily_quota(token)
+        raise
+
+    scored = score_observation(symbol, result)
+    passed, score = scored["passed"], scored["score"]
+    checks, mistakes = scored["checks"], scored["mistakes"]
 
     # GCS に全判定を保存
     judgment_data = {

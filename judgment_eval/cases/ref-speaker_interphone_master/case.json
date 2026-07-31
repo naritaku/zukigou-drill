@@ -1,0 +1,6 @@
+{
+  "symbol_id": "speaker_interphone_master",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "スピーカー型インターホン親機 のお手本 SVG をそのまま描画した理想解答"
+}

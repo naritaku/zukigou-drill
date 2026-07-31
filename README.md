@@ -37,6 +37,9 @@ Google AI Dojo Season 2 提出作品
 
 → 不合格時に「どの特徴が不足しているか」が構造的に分かる
 
+この「正確さ」は主張ではなく実測する。偽 NG 率・偽 OK 率・ブレ・特徴単位の誤り率を
+`python3 scripts/run_judgment_eval.py` で測れる（[docs/EVALUATION.md](docs/EVALUATION.md)）。
+
 ### インフラ
 
 - **DB なし、状態なし** → スケーラブル
@@ -102,6 +105,7 @@ GEMINI_API_KEY="your-free-key" uvicorn main:app --host 0.0.0.0 --port 8080
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — 開発・デプロイ手順
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — システム詳細設計
 - [docs/requirements.md](docs/requirements.md) — 要件書
+- [docs/EVALUATION.md](docs/EVALUATION.md) — 判定精度の測り方
 
 ---
 

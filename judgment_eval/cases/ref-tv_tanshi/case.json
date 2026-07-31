@@ -1,0 +1,6 @@
+{
+  "symbol_id": "tv_tanshi",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "テレビ端子 のお手本 SVG をそのまま描画した理想解答"
+}

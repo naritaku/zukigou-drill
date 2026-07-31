@@ -1,0 +1,6 @@
+{
+  "symbol_id": "distributor_6way",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "6分配器 のお手本 SVG をそのまま描画した理想解答"
+}

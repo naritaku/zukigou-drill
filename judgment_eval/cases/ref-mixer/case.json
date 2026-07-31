@@ -1,0 +1,6 @@
+{
+  "symbol_id": "mixer",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "混合・分波器 のお手本 SVG をそのまま描画した理想解答"
+}

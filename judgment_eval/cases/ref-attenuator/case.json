@@ -1,0 +1,6 @@
+{
+  "symbol_id": "attenuator",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "アッテネータ(減衰器) のお手本 SVG をそのまま描画した理想解答"
+}

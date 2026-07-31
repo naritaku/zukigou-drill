@@ -1970,5 +1970,88 @@ class SaveToGcsUploadTest(unittest.TestCase):
             self.fail("_save_to_gcs must not raise")
 
 
+SAMPLE_SYMBOL = {
+    "id": "sample",
+    "name": "接地極",
+    "required_features": ["縦線が1本ある", "水平線が3本ある"],
+    "forbidden_features": ["水平線が3本以外である"],
+}
+
+
+class BuildVisionPromptTest(unittest.TestCase):
+    """プロンプト生成。評価ハーネスが本番と同じ文面を測れるよう関数として切り出してある。"""
+
+    def test_production_prompt_names_the_symbol(self):
+        prompt = main.build_vision_prompt(SAMPLE_SYMBOL)
+        self.assertIn("課題は「接地極」です", prompt)
+
+    def test_blind_prompt_hides_the_symbol_name(self):
+        prompt = main.build_vision_prompt(SAMPLE_SYMBOL, blind=True)
+        self.assertNotIn("接地極", prompt)
+        self.assertNotIn("課題は", prompt)
+
+    def test_all_features_are_listed_with_indices(self):
+        prompts = (main.build_vision_prompt(SAMPLE_SYMBOL), main.build_vision_prompt(SAMPLE_SYMBOL, blind=True))
+        for prompt in prompts:
+            for feature in SAMPLE_SYMBOL["required_features"] + SAMPLE_SYMBOL["forbidden_features"]:
+                self.assertIn(feature, prompt)
+            self.assertIn('"0"', prompt)
+            self.assertIn('"1"', prompt)
+
+    def test_symbol_without_forbidden_features_is_supported(self):
+        prompt = main.build_vision_prompt({"name": "x", "required_features": ["枠がある"]})
+        self.assertIn("枠がある", prompt)
+
+    def test_judge_endpoint_uses_the_production_prompt(self):
+        symbol = next(s for s in main.SYMBOLS.values() if s["verified"])
+        captured = {}
+
+        def fake_generate(image, prompt, symbol_id, required_count, forbidden_count):
+            captured["prompt"] = prompt
+            return main.VisionResult(
+                required=[True] * len(symbol["required_features"]),
+                forbidden=[False] * len(symbol.get("forbidden_features", [])),
+                observation="ok",
+            )
+
+        with patch.object(main, "_generate_vision_result", side_effect=fake_generate):
+            client = TestClient(main.app)
+            response = client.post(
+                "/api/judge", json={"symbol_id": symbol["id"], "image_b64": inked_png_b64()}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["prompt"], main.build_vision_prompt(symbol))
+
+
+class ScoreObservationTest(unittest.TestCase):
+    """合否はコード側で決まる。Gemini の観察をどう畳み込むかの単体検証。"""
+
+    def test_all_features_satisfied_passes(self):
+        result = main.VisionResult(required=[True, True], forbidden=[False], observation="")
+        scored = main.score_observation(SAMPLE_SYMBOL, result)
+        self.assertTrue(scored["passed"])
+        self.assertEqual(scored["score"], "3/3")
+        self.assertEqual(scored["mistakes"], [])
+
+    def test_missing_required_feature_fails_and_is_named(self):
+        result = main.VisionResult(required=[True, False], forbidden=[False], observation="")
+        scored = main.score_observation(SAMPLE_SYMBOL, result)
+        self.assertFalse(scored["passed"])
+        self.assertEqual(scored["score"], "2/3")
+        self.assertEqual(scored["mistakes"], ["必須特徴が不足: 水平線が3本ある"])
+
+    def test_forbidden_feature_present_fails(self):
+        result = main.VisionResult(required=[True, True], forbidden=[True], observation="")
+        scored = main.score_observation(SAMPLE_SYMBOL, result)
+        self.assertFalse(scored["passed"])
+        self.assertEqual(scored["mistakes"], ["対象外の特徴を検出: 水平線が3本以外である"])
+
+    def test_checks_are_labelled_for_display(self):
+        result = main.VisionResult(required=[True, True], forbidden=[False], observation="")
+        labels = [check["feature"] for check in main.score_observation(SAMPLE_SYMBOL, result)["checks"]]
+        self.assertEqual(labels[0], "必須: 縦線が1本ある")
+        self.assertEqual(labels[-1], "除外: 水平線が3本以外であるがない")
+
+
 if __name__ == "__main__":
     unittest.main()

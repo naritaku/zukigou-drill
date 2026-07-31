@@ -1,0 +1,6 @@
+{
+  "symbol_id": "horn_speaker",
+  "expect": "pass",
+  "source": "rendered-reference",
+  "note": "ホーン型スピーカ のお手本 SVG をそのまま描画した理想解答"
+}
