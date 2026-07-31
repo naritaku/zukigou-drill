@@ -125,6 +125,9 @@ _client_lock = threading.Lock()
 _storage_lock = threading.Lock()
 _firestore_lock = threading.Lock()
 _rate_limited_keys: dict[str, tuple[float, int]] = {}  # APIキー → (レート制限時刻, 連続失敗回数)
+# APIキー → 最後にバックオフを 1 段下げた時刻。次の減衰までの安定期間を測る起点に使う
+# （レート制限時刻そのものは減衰では動かさないため、別に持つ必要がある）。
+_backoff_decayed_at: dict[str, float] = {}
 _rate_limit_lock = threading.Lock()
 # メモリに記録の無いキーの Firestore 参照を短時間キャッシュし、判定/ヘルスチェック毎の
 # read を「キー数 ÷ TTL」に抑える。値は (取得時刻, 生データ or None)。生データは
@@ -273,7 +276,8 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
             raw = cached[1]
             return None if raw is None else _active(*raw)
 
-    # 外部 I/O 中に他のリクエストを直列化しない。
+    # Firestore 読み取りはロックの外で行う。ロックを持ったまま外部 I/O を待つと、
+    # 同じキーを使う全リクエストがその往復ぶん直列化する。
     raw: tuple[float, int, int] | None = None
     db = _get_firestore_client()
     if db:
@@ -288,10 +292,12 @@ def _get_rate_limit_status(api_key: str) -> RateLimitStatus | None:
                 )
         except Exception as e:
             logger.debug(f"Failed to read rate limit from Firestore: {e}")
+            # 障害時はキャッシュせず、次回再試行する
             return None
 
     with _rate_limit_lock:
-        # I/O 中に 429 が記録された場合は、古い Firestore 読み取りで上書きしない。
+        # I/O 中に別スレッドが 429 を記録していれば、そちらが新しい。古い読み取りで
+        # 上書きすると、記録直後のバックオフが 1 回ぶん無視される。
         if api_key in _rate_limited_keys:
             limited_at, count = _rate_limited_keys[api_key]
             return _active(limited_at, count, _BACKOFF_SECONDS[min(count - 1, len(_BACKOFF_SECONDS) - 1)])
@@ -311,6 +317,8 @@ def _mark_rate_limited(api_key: str) -> None:
     """
     now = time.time()
     doc_id = _rate_limit_doc_id(api_key)
+
+    # 直前の (記録時刻, 連続失敗回数) を取得。メモリ優先、無ければ Firestore。
     last_at: float | None = None
     previous_count = 0
     with _rate_limit_lock:
@@ -321,8 +329,10 @@ def _mark_rate_limited(api_key: str) -> None:
             if cached and cached[1]:
                 last_at, previous_count, _ = cached[1]
 
+    # Firestore I/O はロックの外。ここを待つ間、他のキーの記録まで止めない。
     db = _get_firestore_client()
     if last_at is None and db:
+        # 再起動直後はメモリもキャッシュも空。Firestore からバックオフ段階を引き継ぐ。
         try:
             doc = db.collection("rate_limits").document(doc_id).get()
             if doc.exists:
@@ -333,16 +343,19 @@ def _mark_rate_limited(api_key: str) -> None:
             logger.debug(f"Failed to read rate limit from Firestore: {e}")
 
     with _rate_limit_lock:
-        # Firestore I/O 中に別スレッドが記録していれば、そちらを基準にする。
+        # I/O 中に別スレッドが記録していれば、そちらのほうが新しい。
         current = _rate_limited_keys.get(api_key)
         if current and (last_at is None or current[0] > last_at):
             last_at, previous_count = current
+        # 長期間回復していたキーは段階をリセット（過去の高い段階を引きずらない）
         if last_at is not None and now - last_at > _BACKOFF_RESET_SECONDS:
             previous_count = 0
         consecutive_count = min(previous_count + 1, len(_BACKOFF_SECONDS))
         _rate_limited_keys[api_key] = (now, consecutive_count)
-        _fs_status_cache.pop(api_key, None)
+        _backoff_decayed_at.pop(api_key, None)  # 429 が起きたので安定期間は測り直し
+        _fs_status_cache.pop(api_key, None)  # 古い「制限なし」キャッシュを無効化
 
+    # Firestore に保存（永続化）
     backoff_seconds = _BACKOFF_SECONDS[min(consecutive_count - 1, len(_BACKOFF_SECONDS) - 1)]
     if db:
         try:
@@ -353,6 +366,7 @@ def _mark_rate_limited(api_key: str) -> None:
             })
         except Exception as e:
             logger.error(f"Failed to save rate limit status to Firestore: {e}")
+    # 永続化の成否に関わらず、メモリ側の記録は済んでいるのでログは常に出す。
     logger.info(
         f"Rate limited: key {doc_id}",
         extra={"consecutive_count": consecutive_count, "backoff_minutes": backoff_seconds / 60},
@@ -360,38 +374,55 @@ def _mark_rate_limited(api_key: str) -> None:
 
 
 def _mark_key_succeeded(api_key: str) -> None:
-    """十分な安定期間の後だけ、成功時にバックオフを1段減衰させる。"""
+    """十分な安定期間の後だけ、成功時にバックオフを 1 段減衰させる。
+
+    成功のたびに 0 へ戻すと、断続的に 429 を返すキーが何度も高頻度で再試行され、
+    バックオフの意味が無くなる。逆に減衰させないと、一度上がった段階が
+    `_BACKOFF_RESET_SECONDS` まで下がらない。
+
+    減衰の対象は、このインスタンス自身が 429 を観測したキー（`_rate_limited_keys`
+    にあるもの）だけに限る。`_fs_status_cache` 経由で他インスタンスの記録を知った
+    だけのキーまで減衰させると、429 を観測していないキーが `_rate_limited_keys`
+    に居座り、以後 Firestore を読まなくなって共有状態から切り離される。
+    """
     now = time.time()
     doc_id = _rate_limit_doc_id(api_key)
     with _rate_limit_lock:
         memory = _rate_limited_keys.get(api_key)
-        cached = _fs_status_cache.get(api_key)
-    known_count: int | None = None
-    last_at: float | None = None
-    if memory:
-        last_at = memory[0]
-        known_count = memory[1]
-    elif cached is not None and cached[1]:
-        last_at, known_count, _ = cached[1]
-    if known_count is None or last_at is None or known_count <= 0:
+        decayed_at = _backoff_decayed_at.get(api_key, 0.0)
+    if not memory:
         return
+    last_at, known_count = memory
+    if known_count <= 0:
+        return
+    # 現在の段階の 2 倍を無事に越えていることを「安定した」の条件にする。
+    # 起点は「429 の時刻」と「最後に減衰させた時刻」の新しい方。last_at だけを見ると、
+    # _BACKOFF_SECONDS が単調増加なので 1 段下げるたびに閾値も下がり、同じ last_at の
+    # まま条件が成立し続けて一気に 0 まで崩れる。
     backoff = _BACKOFF_SECONDS[min(known_count - 1, len(_BACKOFF_SECONDS) - 1)]
-    if now - last_at < backoff * 2:
+    if now - max(last_at, decayed_at) < backoff * 2:
         return
-    new_count = max(0, known_count - 1)
+
+    new_count = known_count - 1
     with _rate_limit_lock:
-        current = _rate_limited_keys.get(api_key)
-        if current and current != memory:
+        # 判定中に 429 が記録されていたら、減衰させない。
+        if _rate_limited_keys.get(api_key) != memory:
             return
         if new_count:
+            # last_at は「いつ 429 になったか」なので据え置く。ここで now にすると
+            # _get_rate_limit_status が「たった今バックオフに入った」と誤読する。
             _rate_limited_keys[api_key] = (last_at, new_count)
+            _backoff_decayed_at[api_key] = now
         else:
             _rate_limited_keys.pop(api_key, None)
+            _backoff_decayed_at.pop(api_key, None)
         _fs_status_cache.pop(api_key, None)
+
     db = _get_firestore_client()
     if not db:
         return
     try:
+        # timestamp は更新しない。減衰は「いつ 429 になったか」を変える出来事ではない。
         db.collection("rate_limits").document(doc_id).set({
             "consecutive_count": new_count,
             "backoff_seconds": 0 if new_count == 0 else _BACKOFF_SECONDS[new_count - 1],
@@ -976,6 +1007,7 @@ def _check_rate(request: Request) -> None:
         while queue and now - queue[0] > RATE_WINDOW:
             queue.popleft()
         if len(queue) >= RATE_LIMIT:
+            # detail は機械可読な識別子にする。利用者向け文言はフロント側で組み立てる。
             raise HTTPException(429, "rate_limited")
         queue.append(now)
         # 長時間使われていないキーを定期的に掃除する。

@@ -244,6 +244,7 @@ class RateLimitingTest(unittest.TestCase):
         main._rate_limited_keys.clear()
         main._fs_status_cache.clear()
         main._quota_memory.clear()
+        main._backoff_decayed_at.clear()
 
     def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
         status = main._get_rate_limit_status("test-key")
@@ -262,6 +263,150 @@ class RateLimitingTest(unittest.TestCase):
         self.assertIsNotNone(status)
         expected_backoff = main._BACKOFF_SECONDS[2]  # 3rd attempt
         self.assertEqual(status["backoff_seconds"], expected_backoff)
+
+    def test_firestore_io_is_not_called_while_rate_limit_lock_is_held(self):
+        """ロックを持ったまま外部 I/O を待つと、同じキーの全リクエストが直列化する。"""
+        class TrackingLock:
+            held = False
+
+            def __enter__(self):
+                self.held = True
+
+            def __exit__(self, *args):
+                self.held = False
+
+        lock = TrackingLock()
+        snapshot = Mock(exists=False)
+        # side_effect の中で self.fail() を呼ぶと、その AssertionError が実装側の
+        # `except Exception` に飲み込まれてテストが空回りする。違反は外に記録する。
+        violations: list[str] = []
+
+        def record(operation, result=None):
+            def _call(*args, **kwargs):
+                if lock.held:
+                    violations.append(operation)
+                return result
+            return _call
+
+        ref = Mock()
+        ref.get.side_effect = record("get", snapshot)
+        ref.set.side_effect = record("set")
+        db = Mock()
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_rate_limit_lock", lock), \
+             patch.object(main, "_get_firestore_client", return_value=db):
+            self.assertIsNone(main._get_rate_limit_status("io-key"))
+            main._mark_rate_limited("io-key")
+        self.assertEqual(violations, [], f"Firestore I/O under _rate_limit_lock: {violations}")
+        # I/O 自体は行われている（何も呼ばずに違反ゼロ、を成功と誤認しない）
+        self.assertTrue(ref.get.called and ref.set.called)
+
+    def test_status_read_does_not_overwrite_a_429_recorded_during_io(self):
+        """I/O 中に記録された 429 を、古い Firestore 読み取りで消してしまわない。"""
+        snapshot = Mock(exists=False)  # Firestore には記録が無い ＝「制限なし」
+        interrupted = []
+
+        def mark_during_io(*args, **kwargs):
+            if not interrupted:  # 割り込み側自身の read で再帰しないよう 1 回だけ
+                interrupted.append(1)
+                main._mark_rate_limited("racy-key")  # I/O の最中に 429 を記録
+            return snapshot
+
+        ref = Mock()
+        ref.get.side_effect = mark_during_io
+        db = Mock()
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            status = main._get_rate_limit_status("racy-key")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["consecutive_count"], 1)
+        self.assertNotIn("racy-key", main._fs_status_cache)
+
+    def test_concurrent_marks_do_not_lose_an_increment(self):
+        """I/O 中に別スレッドが記録した段階を引き継ぎ、上書きで 1 回ぶん失わない。"""
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {
+            "timestamp": main.time.time(),
+            "consecutive_count": 4,
+            "backoff_seconds": main._BACKOFF_SECONDS[3],
+        }
+        calls = []
+
+        def mark_during_io(*args, **kwargs):
+            if not calls:  # 最初の read の最中にだけ割り込む
+                calls.append(1)
+                main._mark_rate_limited("racy-key")
+            return doc
+
+        ref = Mock()
+        ref.get.side_effect = mark_during_io
+        db = Mock()
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            main._mark_rate_limited("racy-key")
+        # 割り込み側が 4→5、こちらがそれを引き継いで 5→6。上書きなら 5 のままになる。
+        self.assertEqual(main._rate_limited_keys["racy-key"][1], 6)
+
+    def test_stable_success_reduces_only_one_backoff_level(self):
+        # 現在の段階の 2 倍を越えて安定していれば 1 段だけ下げる（0 には戻さない）。
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[2] * 2 - 1, 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertEqual(main._rate_limited_keys["key"][1], 2)
+
+    def test_repeated_success_does_not_cascade_down_the_backoff_levels(self):
+        """_BACKOFF_SECONDS は単調増加なので、1 段下げるたびに閾値も下がる。
+        起点を据え置くと同じ瞬間に何段でも下がってしまう。"""
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[4] * 2 - 1, 5)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            for _ in range(5):
+                main._mark_key_succeeded("key")
+        self.assertEqual(main._rate_limited_keys["key"][1], 4)
+
+    def test_recent_success_does_not_reduce_backoff(self):
+        # 断続的に 429 を返すキーが成功のたびに段階を戻すと、バックオフが機能しなくなる。
+        main._rate_limited_keys["key"] = (main.time.time(), 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertEqual(main._rate_limited_keys["key"][1], 3)
+
+    def test_success_on_unlimited_key_is_a_noop(self):
+        with patch.object(main, "_get_firestore_client") as get_db:
+            main._mark_key_succeeded("never-limited")
+        self.assertNotIn("never-limited", main._rate_limited_keys)
+        get_db.assert_not_called()
+
+    def test_success_does_not_pin_a_key_known_only_from_firestore(self):
+        """他インスタンスの記録をキャッシュ経由で知っただけのキーを
+        _rate_limited_keys に載せると、以後 Firestore を読まなくなり共有状態から外れる。"""
+        stale = main.time.time() - main._BACKOFF_SECONDS[4] * 2 - 1
+        main._fs_status_cache["shared-key"] = (main.time.time(), (stale, 5, main._BACKOFF_SECONDS[4]))
+        with patch.object(main, "_get_firestore_client") as get_db:
+            main._mark_key_succeeded("shared-key")
+        self.assertNotIn("shared-key", main._rate_limited_keys)
+        get_db.assert_not_called()
+
+    def test_decay_to_zero_clears_the_key(self):
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[0] * 2 - 1, 1)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertNotIn("key", main._rate_limited_keys)
+        self.assertIsNone(main._get_rate_limit_status("key"))
+
+    def test_decay_does_not_make_the_key_look_freshly_limited(self):
+        """減衰で last_at を now にすると、成功したキーが即座に「制限中」に見える。"""
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[2] * 2 - 1, 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertIsNone(main._get_rate_limit_status("key"))
+
+    def test_new_429_restarts_the_decay_stability_window(self):
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[2] * 2 - 1, 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")   # 3 → 2、減衰時刻を記録
+            main._mark_rate_limited("key")    # 429 で 3 へ戻り、安定期間は測り直し
+            main._mark_key_succeeded("key")   # 直後なので減衰しない
+        self.assertEqual(main._rate_limited_keys["key"][1], 3)
 
 
 class FirestoreRateLimitTest(unittest.TestCase):
@@ -822,6 +967,23 @@ class GenerateVisionResultTest(unittest.TestCase):
         self.assertEqual(result.forbidden, [False, True])
         self.assertEqual(result.observation, "観察結果")
 
+    def test_generate_vision_result_reports_success_for_backoff_decay(self):
+        """成功をレート制限側に伝えないと、一度上がった段階が下がらない。"""
+        img = Image.new("RGB", (64, 64), "white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+
+        fake_client = Mock()
+        fake_client.models.generate_content.return_value.text = json.dumps(
+            {"required": [True], "forbidden": [], "observation": "ok"}
+        )
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
+             patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
+             patch.object(main, "_get_genai_client", return_value=fake_client), \
+             patch.object(main, "_mark_key_succeeded") as succeeded:
+            main._generate_vision_result(buf.getvalue(), "test prompt", "symbol-1", 1, 0)
+        succeeded.assert_called_once_with("test-key")
+
     def test_generate_vision_result_falls_back_models(self):
         """モデルフォールバックが機能する"""
         img = Image.new("RGB", (64, 64), "white")
@@ -1115,6 +1277,8 @@ class ClientIpTest(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 main._check_rate(self._request({"x-forwarded-for": "a, 198.51.100.1"}))
             self.assertEqual(ctx.exception.status_code, 429)
+            # detail は機械可読な識別子（フロントが文言を組み立てる）
+            self.assertEqual(ctx.exception.detail, "rate_limited")
         finally:
             main.RATE_LIMIT = original
             main._hits.clear()
