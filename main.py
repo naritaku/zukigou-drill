@@ -562,7 +562,7 @@ def _consume_daily_quotas(specs: list[tuple[str, int, str]]) -> list[QuotaToken]
         def reserve(tx: Any) -> list[QuotaToken] | None:
             # Firestore のトランザクションは全ての読み取りを書き込みより先に行う必要がある。
             snapshots = [ref.get(transaction=tx) for ref in refs]
-            for snapshot, target in zip(snapshots, targets):
+            for snapshot, target in zip(snapshots, targets, strict=True):
                 current = snapshot.to_dict().get("count", 0) if snapshot.exists else 0
                 if not isinstance(current, int) or current >= target["per_shard"]:
                     return None
@@ -571,7 +571,7 @@ def _consume_daily_quotas(specs: list[tuple[str, int, str]]) -> list[QuotaToken]
                 tx.set(ref, {"count": firestore.Increment(1), "expires_at": expires}, merge=True)
             return [
                 {"backend": "firestore", "key": target["doc_id"], "ref": ref, "released": False}
-                for target, ref in zip(targets, refs)
+                for target, ref in zip(targets, refs, strict=True)
             ]
 
         return reserve(transaction)

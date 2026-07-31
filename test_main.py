@@ -257,7 +257,7 @@ class RateLimitingTest(unittest.TestCase):
         self.assertEqual(status["consecutive_count"], 1)
 
     def test_mark_rate_limited_uses_correct_backoff_time(self):
-        for attempt in range(1, 4):
+        for _attempt in range(1, 4):
             main._mark_rate_limited("test-key")
         status = main._get_rate_limit_status("test-key")
         self.assertIsNotNone(status)
@@ -506,8 +506,6 @@ class FirestoreRateLimitTest(unittest.TestCase):
         MUST①のリグレッション: 満了時に get_status が doc を消すと、この後の mark が
         1 に戻ってしまう。消さない実装なら 2 に引き継がれる。
         """
-        import time as time_module
-
         store = {}
 
         class FakeDoc:
