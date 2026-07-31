@@ -1658,6 +1658,16 @@ class ReviewRegressionTest(unittest.TestCase):
             main._consume_daily_quota("fallback-probe", 5)
         self.assertEqual(main._quota_status()["quota_fallbacks"], before + 1)
 
+    def test_quota_status_counts_fallbacks_when_memory_quota_is_exhausted(self):
+        # 退避中に枠が枯渇して 429 を返した経路こそ、監視から漏らしてはいけない。
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 1), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quota("exhaust-probe", 1))
+            before = main._quota_status()["quota_fallbacks"]
+            self.assertIsNone(main._consume_daily_quota("exhaust-probe", 1))
+        self.assertEqual(main._quota_status()["quota_fallbacks"], before + 1)
+
     def test_quota_day_changes_at_jst_midnight(self):
         before = main.datetime.datetime(2026, 7, 28, 14, 59, 59, tzinfo=main.datetime.UTC)
         after = main.datetime.datetime(2026, 7, 28, 15, 0, 1, tzinfo=main.datetime.UTC)

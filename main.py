@@ -486,6 +486,13 @@ def _quota_target(day: str, field: str, limit: int, subject: str) -> QuotaTarget
 
 
 def _consume_memory_quotas(targets: list[QuotaTarget]) -> list[QuotaToken] | None:
+    # 退避したことを予約の成否より先に記録する。枠が枯渇して 429 を返す経路も退避中で
+    # あることに変わりはなく、後から記録すると障害中の拒否だけが監視から漏れる。
+    if _note_quota_fallback():
+        logger.error(
+            "Firestore quota unavailable; using memory quota",
+            extra={"quota": ",".join(target["field"] for target in targets)},
+        )
     tokens: list[QuotaToken] = []
     with _quota_memory_lock:
         for target in targets:
@@ -498,11 +505,6 @@ def _consume_memory_quotas(targets: list[QuotaTarget]) -> list[QuotaToken] | Non
                 return None
             _quota_memory[key] += 1
             tokens.append({"backend": "memory", "key": key, "ref": None, "released": False})
-    if _note_quota_fallback():
-        logger.error(
-            "Firestore quota unavailable; using memory quota",
-            extra={"quota": ",".join(target["field"] for target in targets)},
-        )
     return tokens
 
 
