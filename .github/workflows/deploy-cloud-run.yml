@@ -23,6 +23,38 @@ on:
         description: Rate limit window in seconds
         required: false
         default: "60"
+      daily_judge_limit:
+        description: Global judgments allowed per UTC day
+        required: false
+        default: "1000"
+      daily_paid_limit:
+        description: Paid-key judgments allowed per UTC day
+        required: false
+        default: "100"
+      daily_ip_limit:
+        description: Judgments allowed per client per JST day
+        required: false
+        default: "50"
+      quota_shards:
+        description: Firestore quota shard count
+        required: false
+        default: "10"
+      public_base_url:
+        description: Canonical public URL
+        required: false
+        default: "https://zukigou-drill-dojo.run.app/"
+      client_ip_index_from_end:
+        description: Which X-Forwarded-For entry is the client, counted from the end (1 = last)
+        required: false
+        default: "1"
+      judgment_record_ttl:
+        description: Dispute record lifetime in seconds
+        required: false
+        default: "3600"
+      concurrency:
+        description: Cloud Run requests per instance (kept below the sync worker pool)
+        required: false
+        default: "20"
       all_judgments_bucket:
         description: GCS bucket for all judgments (empty disables saving)
         required: false
@@ -70,11 +102,13 @@ jobs:
         run: |
           # GEMINI_API_KEY 以外は任意。Secret Manager に無いものを指定すると
           # デプロイ全体が失敗するため、存在するものだけを渡す。
-          if ! gcloud secrets describe GEMINI_API_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
-            echo "::error::Secret GEMINI_API_KEY not found in project $PROJECT_ID"
-            exit 1
-          fi
-          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest"
+          for required in GEMINI_API_KEY DAILY_IP_SALT; do
+            if ! gcloud secrets describe "$required" --project "$PROJECT_ID" >/dev/null 2>&1; then
+              echo "::error::Secret $required not found in project $PROJECT_ID"
+              exit 1
+            fi
+          done
+          MAPPINGS="GEMINI_API_KEY=GEMINI_API_KEY:latest,DAILY_IP_SALT=DAILY_IP_SALT:latest"
           for name in GEMINI_API_KEYS GEMINI_PAID_API_KEY; do
             if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
               MAPPINGS="${MAPPINGS},${name}=${name}:latest"
@@ -83,6 +117,15 @@ jobs:
             fi
           done
           echo "mappings=${MAPPINGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate numeric inputs
+        env:
+          VALUES: "${{ inputs.max_instances }} ${{ inputs.concurrency }} ${{ inputs.rate_limit }} ${{ inputs.rate_window }} ${{ inputs.daily_judge_limit }} ${{ inputs.daily_paid_limit }} ${{ inputs.daily_ip_limit }} ${{ inputs.quota_shards }} ${{ inputs.client_ip_index_from_end }} ${{ inputs.judgment_record_ttl }}"
+        run: |
+          for value in $VALUES; do
+            [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::Invalid numeric input: $value"; exit 1; }
+          done
+          [[ "${{ inputs.public_base_url }}" != *"|"* ]] || { echo "::error::public_base_url contains reserved delimiter"; exit 1; }
 
       - name: Deploy from source
         run: |
@@ -97,8 +140,9 @@ jobs:
             --service-account "$RUNTIME_SA" \
             --build-service-account "projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}" \
             --max-instances "${{ inputs.max_instances }}" \
+            --concurrency "${{ inputs.concurrency }}" \
             --set-secrets "${{ steps.secrets.outputs.mappings }}" \
-            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
+            --set-env-vars "^|^GEMINI_MODELS_FREE=${{ inputs.gemini_models_free }}|GEMINI_MODELS_PAID=${{ inputs.gemini_models_paid }}|RATE_LIMIT=${{ inputs.rate_limit }}|RATE_WINDOW=${{ inputs.rate_window }}|DAILY_JUDGE_LIMIT=${{ inputs.daily_judge_limit }}|DAILY_PAID_LIMIT=${{ inputs.daily_paid_limit }}|DAILY_IP_LIMIT=${{ inputs.daily_ip_limit }}|QUOTA_SHARDS=${{ inputs.quota_shards }}|MAX_INSTANCES=${{ inputs.max_instances }}|PUBLIC_BASE_URL=${{ inputs.public_base_url }}|CLIENT_IP_INDEX_FROM_END=${{ inputs.client_ip_index_from_end }}|JUDGMENT_RECORD_TTL=${{ inputs.judgment_record_ttl }}|ALL_JUDGMENTS_BUCKET=${{ inputs.all_judgments_bucket }}|FEEDBACK_BUCKET=${{ inputs.feedback_bucket }}"
 
       - name: Verify health endpoints
         run: |

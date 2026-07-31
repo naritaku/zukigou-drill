@@ -21,8 +21,9 @@ BUILD_SA_ID="${BUILD_SA_ID:-zukigou-drill-build}"
 BUILD_SA="${BUILD_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-# Cloud Run に渡すシークレット。ここに無いものはデプロイ時にスキップされる。
-SECRETS=(GEMINI_API_KEY GEMINI_API_KEYS GEMINI_PAID_API_KEY)
+# Cloud Run に渡すシークレット。GEMINI_API_KEY と DAILY_IP_SALT は必須で、
+# 未作成だとデプロイが失敗する。それ以外は存在するものだけが渡される。
+SECRETS=(GEMINI_API_KEY DAILY_IP_SALT GEMINI_API_KEYS GEMINI_PAID_API_KEY)
 
 # 1 日あたりのリクエスト上限をかけるモデルと値。
 # main.py の既定の試行順（無料/有料ともに 3.1 Flash Lite → 3.5 Flash）に対応させる。

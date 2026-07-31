@@ -1,4 +1,5 @@
 import base64
+import inspect
 import io
 import json
 import unittest
@@ -192,10 +193,11 @@ class JudgeEndpointTest(unittest.TestCase):
 
     def test_judge_falls_back_models_before_paid_key(self):
         required = self.symbol.get("required_features", self.symbol["features"])
+        forbidden = self.symbol.get("forbidden_features", [])
         response_text = json.dumps(
             {
                 "required": [True for _ in required],
-                "forbidden": [],
+                "forbidden": [False for _ in forbidden],
                 "observation": "fallback succeeded",
             },
             ensure_ascii=False,
@@ -225,26 +227,23 @@ class JudgeEndpointTest(unittest.TestCase):
         self.assertEqual(attempted_models, ["gemini-3.6-flash", "gemini-2.5-flash-lite"])
         self.assertEqual(paid_client.models.generate_content.call_args.kwargs["model"], "gemini-3.6-flash")
 
-    def test_report_rejects_tampered_checklist_before_saving_feedback(self):
-        judgment = {
-            "passed": True,
-            "checks": [{"feature": "改ざんされた項目", "ok": True}],
-            "mistakes": [],
-            "observation": "",
-        }
-        with patch.object(main, "_save_feedback") as save_feedback:
+    def test_report_rejects_unclaimable_judgment_before_promoting_feedback(self):
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", return_value=("unknown", None)), \
+             patch.object(main, "_promote_feedback") as promote_feedback:
             res = self.client.post(
                 "/api/report",
-                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+                json={"judgment_id": "0" * 32},
             )
-        self.assertEqual(res.status_code, 400)
-        save_feedback.assert_not_called()
+        self.assertEqual(res.status_code, 404)
+        promote_feedback.assert_not_called()
 
 
 class RateLimitingTest(unittest.TestCase):
     def setUp(self):
         main._rate_limited_keys.clear()
         main._fs_status_cache.clear()
+        main._quota_memory.clear()
 
     def test_get_rate_limit_status_returns_none_when_key_not_limited(self):
         status = main._get_rate_limit_status("test-key")
@@ -791,7 +790,7 @@ class GenerateVisionResultTest(unittest.TestCase):
 
         with patch.object(main, "_gemini_api_keys", return_value=[]):
             with self.assertRaises(HTTPException) as ctx:
-                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
             self.assertEqual(ctx.exception.status_code, 503)
 
     def test_generate_vision_result_valid_response(self):
@@ -816,7 +815,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 2, 2)
 
         self.assertIsInstance(result, main.VisionResult)
         self.assertEqual(result.required, [True, False])
@@ -848,7 +847,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "fallback succeeded")
         self.assertEqual(fake_client.models.generate_content.call_count, 2)
@@ -880,7 +879,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "fallback to paid succeeded")
         paid_client.models.generate_content.assert_called_once()
@@ -910,7 +909,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "test-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.5-flash", "gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "valid response")
 
@@ -947,7 +946,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "paid key succeeded")
         # free-key がレート制限に記録されたか確認
@@ -1000,7 +999,7 @@ class GenerateVisionResultTest(unittest.TestCase):
         with patch.object(main, "_gemini_api_keys", return_value=[("primary", "free-key"), ("paid", "paid-key")]), \
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", side_effect=get_client):
-            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+            result = main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
 
         self.assertEqual(result.observation, "paid key only")
         # free_client は呼び出されていないはず
@@ -1020,7 +1019,7 @@ class GenerateVisionResultTest(unittest.TestCase):
              patch.object(main, "_gemini_models", return_value=["gemini-3.1-flash-lite"]), \
              patch.object(main, "_get_genai_client", return_value=fake_client):
             with self.assertRaises(HTTPException) as ctx:
-                main._generate_vision_result(image_bytes, "test prompt", "symbol-1")
+                main._generate_vision_result(image_bytes, "test prompt", "symbol-1", 1, 0)
             self.assertEqual(ctx.exception.status_code, 503)
 
 
@@ -1312,21 +1311,20 @@ class ReportEndpointTest(unittest.TestCase):
         return checks
 
     def test_report_accepts_matching_checklist(self):
-        judgment = {"passed": True, "checks": self._valid_checks(), "mistakes": [], "observation": ""}
-        with patch.object(main, "_save_feedback") as save:
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", return_value=("ok", {"symbol_id": self.symbol["id"]})), \
+             patch.object(main, "_promote_feedback"):
             res = self.client.post(
                 "/api/report",
-                json={"symbol_id": self.symbol["id"], "image_b64": inked_png_b64(), "judgment": judgment},
+                json={"judgment_id": "a" * 32},
             )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json(), {"ok": True})
 
     def test_report_unknown_symbol_returns_404_json(self):
-        judgment = {"passed": True, "checks": [], "mistakes": [], "observation": ""}
-        res = self.client.post(
-            "/api/report",
-            json={"symbol_id": "nope", "image_b64": inked_png_b64(), "judgment": judgment},
-        )
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", return_value=("unknown", None)):
+            res = self.client.post("/api/report", json={"judgment_id": "b" * 32})
         self.assertEqual(res.status_code, 404)
         self.assertIn("application/json", res.headers["content-type"])
 
@@ -1391,6 +1389,336 @@ class LoadSymbolsValidationTest(unittest.TestCase):
             del symbol[field]
             with self.subTest(field=field), self.assertRaises(RuntimeError):
                 self._run_with({"symbols": [symbol]})
+
+
+class ReviewRegressionTest(unittest.TestCase):
+    """課金・応答整合性・署名のレビュー指摘に対する回帰テスト。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        self.symbol = next(s for s in main.SYMBOLS.values() if s["verified"])
+        main._hits.clear()
+        main._rate_limited_keys.clear()
+        main._fs_status_cache.clear()
+        main._quota_memory.clear()
+
+    def _response(self):
+        return json.dumps({
+            "required": [True] * len(self.symbol["required_features"]),
+            "forbidden": [False] * len(self.symbol.get("forbidden_features", [])),
+            "observation": "ok",
+        })
+
+    def test_global_daily_limit_returns_429_without_calling_gemini(self):
+        with patch.object(main, "_consume_daily_quotas", return_value=None), \
+             patch.object(main, "_get_genai_client") as get_client:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 429)
+        get_client.assert_not_called()
+
+    def test_paid_limit_is_independent_from_global_limit(self):
+        paid = Mock()
+        paid.models.generate_content.return_value.text = self._response()
+        judge_tokens = [{"backend": "memory", "key": field, "ref": None} for field in ("ip", "global")]
+        with patch.object(main, "_consume_daily_quotas", return_value=judge_tokens), \
+             patch.object(main, "_consume_daily_quota", return_value=None), \
+             patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
+             patch.object(main, "_get_genai_client", return_value=paid):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 503)
+        paid.models.generate_content.assert_not_called()
+
+    def test_short_feature_array_falls_back_instead_of_failing_drawing(self):
+        short = json.loads(self._response())
+        short["required"] = short["required"][:-1]
+        client = Mock()
+        client.models.generate_content.side_effect = [Mock(text=json.dumps(short)), Mock(text=self._response())]
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "key")]), \
+             patch.object(main, "_gemini_models", return_value=["first", "second"]), \
+             patch.object(main, "_get_genai_client", return_value=client):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(client.models.generate_content.call_count, 2)
+
+    def test_recent_success_does_not_reduce_429_escalation(self):
+        main._mark_rate_limited("key")
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[0] - 1, 1)
+        client = Mock()
+        client.models.generate_content.return_value.text = self._response()
+        with patch.object(main, "_gemini_api_keys", return_value=[("primary", "key")]), \
+             patch.object(main, "_gemini_models", return_value=["model"]), \
+             patch.object(main, "_get_genai_client", return_value=client):
+            main._generate_vision_result(
+                b"png", "prompt", self.symbol["id"],
+                len(self.symbol["required_features"]), len(self.symbol.get("forbidden_features", [])),
+            )
+        main._mark_rate_limited("key")
+        self.assertEqual(main._get_rate_limit_status("key")["consecutive_count"], 2)
+
+    def test_stable_success_reduces_only_one_backoff_level(self):
+        main._rate_limited_keys["key"] = (main.time.time() - main._BACKOFF_SECONDS[2] * 2 - 1, 3)
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._mark_key_succeeded("key")
+        self.assertEqual(main._rate_limited_keys["key"][1], 2)
+
+    def test_unverified_symbol_is_not_judgeable_or_listed(self):
+        unverified = {**self.symbol, "id": "unverified-test", "verified": False}
+        with patch.dict(main.SYMBOLS, {unverified["id"]: unverified}, clear=True):
+            response = self.client.post("/api/judge", json={
+                "symbol_id": unverified["id"], "image_b64": inked_png_b64(),
+            })
+            listed = self.client.get("/api/symbols").json()
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(listed, [])
+
+    def test_report_rejects_unknown_and_replayed_id(self):
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_claim_judgment", side_effect=[("unknown", None), ("replayed", None)]):
+            self.assertEqual(self.client.post("/api/report", json={"judgment_id": "c" * 32}).status_code, 404)
+            self.assertEqual(self.client.post("/api/report", json={"judgment_id": "c" * 32}).status_code, 409)
+
+    def test_firestore_io_is_not_called_while_rate_limit_lock_is_held(self):
+        class TrackingLock:
+            held = False
+            def __enter__(self):
+                self.held = True
+            def __exit__(self, *args):
+                self.held = False
+
+        lock = TrackingLock()
+        snapshot = Mock(exists=False)
+        ref = Mock()
+        ref.get.side_effect = lambda *a, **k: (
+            self.fail("Firestore get under _rate_limit_lock") if lock.held else snapshot
+        )
+        ref.set.side_effect = lambda *a, **k: (
+            self.fail("Firestore set under _rate_limit_lock") if lock.held else None
+        )
+        db = Mock()
+        db.collection.return_value.document.return_value = ref
+        with patch.object(main, "_rate_limit_lock", lock), \
+             patch.object(main, "_get_firestore_client", return_value=db):
+            self.assertIsNone(main._get_rate_limit_status("io-key"))
+            main._mark_rate_limited("io-key")
+
+    def test_daily_quota_uses_independent_transaction_fields(self):
+        full = Mock(exists=True)
+        full.to_dict.return_value = {"count": 1}
+        available = Mock(exists=True)
+        available.to_dict.return_value = {"count": 0}
+        ref = Mock()
+        ref.get.side_effect = [full, available]
+        transaction = Mock()
+        db = Mock()
+        db.transaction.return_value = transaction
+        db.collection.return_value.document.return_value.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            self.assertFalse(main._consume_daily_quota("judge_calls", 3))
+            self.assertTrue(main._consume_daily_quota("paid_calls", 20))
+        transaction.set.assert_called_once()
+        update = transaction.set.call_args.args[1]
+        self.assertIn("count", update)
+
+    def test_subject_quota_uses_full_limit_instead_of_one_shard_slice(self):
+        # 主体別カウンタをさらにシャードすると 1 主体は常に同じシャードへ落ち、
+        # 実効上限が limit/QUOTA_SHARDS まで縮んでしまう。
+        snapshot = Mock(exists=True)
+        snapshot.to_dict.return_value = {"count": main.DAILY_IP_LIMIT - 1}
+        ref = Mock()
+        ref.get.return_value = snapshot
+        db = Mock()
+        db.collection.return_value.document.return_value.collection.return_value.document.return_value = ref
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            token = main._consume_daily_quota("ip_calls", main.DAILY_IP_LIMIT, "203.0.113.7")
+        self.assertIsNotNone(token)
+        self.assertTrue(token["key"].endswith("-0"))
+
+    def test_promote_feedback_keeps_record_when_pending_image_is_missing(self):
+        # 保留画像が無くても、報告は既に disputed 済みで再送できない。
+        # copy_blob の例外で判定メタデータまで失わせない。
+        blob = Mock()
+        bucket = Mock()
+        bucket.blob.return_value = blob
+        bucket.copy_blob.side_effect = RuntimeError("pending image not found")
+        storage = Mock()
+        storage.bucket.return_value = bucket
+        judgment_id = "a" * 32
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_get_storage_client", return_value=storage), \
+             self.assertLogs("kenzu", "ERROR"):
+            main._promote_feedback(judgment_id, {"symbol_id": self.symbol["id"]})
+        self.assertEqual(bucket.blob.call_args_list[0].args[0], f"disputed/{judgment_id}.json")
+        blob.upload_from_string.assert_called_once()
+
+    def test_feedback_persistence_is_not_deferred_to_background_tasks(self):
+        # Cloud Run は既定でレスポンス後に CPU を絞るため、BackgroundTasks の完了時刻を
+        # 別の API から当てにできない。異議報告の経路は同期で行う。
+        self.assertNotIn("background", inspect.signature(main.report).parameters)
+
+    def test_page_response_is_private_and_varies_by_host(self):
+        response = self.client.get("/drill")
+        self.assertIn("private", response.headers["cache-control"])
+        self.assertEqual(response.headers["vary"], "Host")
+
+    def test_client_ip_counts_from_the_end_not_proxy_hops(self):
+        request = ClientIpTest()._request({"x-forwarded-for": "1.1.1.1, 2.2.2.2, 3.3.3.3"})
+        with patch.object(main, "CLIENT_IP_INDEX_FROM_END", 2):
+            self.assertEqual(main._client_ip(request), "2.2.2.2")
+
+    def test_firestore_outage_reports_503_not_expired_404(self):
+        # サーバー側障害を 404 で返すと、フロントが「報告期限が切れています」と
+        # 誤って表示してしまう。
+        with patch.object(main, "FEEDBACK_BUCKET", "test-bucket"), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            response = self.client.post("/api/report", json={"judgment_id": "f" * 32})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "unavailable")
+
+    def test_claim_judgment_transaction_failure_is_unavailable(self):
+        db = Mock()
+        db.transaction.side_effect = RuntimeError("firestore down")
+        with patch.object(main, "_get_firestore_client", return_value=db):
+            self.assertEqual(main._claim_judgment("f" * 32), ("unavailable", None))
+
+    def test_generate_vision_result_requires_expected_feature_counts(self):
+        # 既定値で長さ検証を素通りできると、_flag_at が IndexError を投げる。
+        with self.assertRaises(TypeError):
+            main._generate_vision_result(b"png", "prompt", self.symbol["id"])
+
+    def test_paid_quota_is_released_when_no_model_is_configured(self):
+        paid_token = {"backend": "memory", "key": "paid", "ref": None, "released": False}
+        with patch.object(main, "_gemini_api_keys", return_value=[("paid", "paid-key")]), \
+             patch.object(main, "_consume_daily_quota", return_value=paid_token), \
+             patch.object(main, "_gemini_models", return_value=[]), \
+             patch.object(main, "_release_daily_quota") as release:
+            with self.assertRaises(HTTPException):
+                main._generate_vision_result(b"png", "prompt", self.symbol["id"], 1, 0)
+        release.assert_called_once_with(paid_token)
+
+    def test_failed_gemini_releases_ip_and_global_reservations(self):
+        tokens = [
+            {"backend": "memory", "key": "ip", "ref": None},
+            {"backend": "memory", "key": "global", "ref": None},
+        ]
+        with patch.object(main, "_consume_daily_quotas", return_value=tokens), \
+             patch.object(main, "_generate_vision_result", side_effect=HTTPException(503, "failed")), \
+             patch.object(main, "_release_daily_quota") as release:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(release.call_count, 2)
+
+    def test_ip_and_global_quota_are_reserved_in_one_transaction(self):
+        # 個別に取ると、後段が枯渇したとき前段を解放して回る必要が出る。
+        with patch.object(main, "_consume_daily_quotas", return_value=None) as consume, \
+             patch.object(main, "_get_genai_client") as get_client:
+            response = self.client.post("/api/judge", json={
+                "symbol_id": self.symbol["id"], "image_b64": inked_png_b64(),
+            })
+        self.assertEqual(response.status_code, 429)
+        consume.assert_called_once()
+        self.assertEqual(
+            [field for field, _, _ in consume.call_args.args[0]], ["ip_calls", "judge_calls"]
+        )
+        get_client.assert_not_called()
+
+    def test_partial_memory_quota_reservation_is_rolled_back(self):
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 1), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quotas([("a", 1, "s"), ("b", 5, "s")]))
+            # a はもう枯渇。b だけ増えた状態を残さない。
+            self.assertIsNone(main._consume_daily_quotas([("a", 1, "s"), ("b", 5, "s")]))
+            self.assertIsNotNone(main._consume_daily_quotas([("b", 5, "s")]))
+        key = main._quota_target(main._quota_day(), "b", 5, "s")["memory_key"]
+        self.assertEqual(main._quota_memory[key], 2)
+
+    def test_memory_quota_divides_limit_by_max_instances(self):
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 2), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quota("judge", 4))
+            self.assertIsNotNone(main._consume_daily_quota("judge", 4))
+            self.assertIsNone(main._consume_daily_quota("judge", 4))
+        self.assertEqual(main._quota_status()["quota_backend"], "memory")
+
+    def test_quota_status_counts_fallbacks_instead_of_last_backend(self):
+        # 成功した 1 リクエストで firestore に戻る単純なフラグでは部分障害が隠れる。
+        before = main._quota_status()["quota_fallbacks"]
+        with patch.object(main, "_get_firestore_client", return_value=None):
+            main._consume_daily_quota("fallback-probe", 5)
+        self.assertEqual(main._quota_status()["quota_fallbacks"], before + 1)
+
+    def test_quota_status_counts_fallbacks_when_memory_quota_is_exhausted(self):
+        # 退避中に枠が枯渇して 429 を返した経路こそ、監視から漏らしてはいけない。
+        main._quota_memory.clear()
+        with patch.object(main, "MAX_INSTANCES", 1), \
+             patch.object(main, "_get_firestore_client", return_value=None):
+            self.assertIsNotNone(main._consume_daily_quota("exhaust-probe", 1))
+            before = main._quota_status()["quota_fallbacks"]
+            self.assertIsNone(main._consume_daily_quota("exhaust-probe", 1))
+        self.assertEqual(main._quota_status()["quota_fallbacks"], before + 1)
+
+    def test_quota_day_changes_at_jst_midnight(self):
+        before = main.datetime.datetime(2026, 7, 28, 14, 59, 59, tzinfo=main.datetime.UTC)
+        after = main.datetime.datetime(2026, 7, 28, 15, 0, 1, tzinfo=main.datetime.UTC)
+        self.assertEqual(main._quota_day(before), "2026-07-28")
+        self.assertEqual(main._quota_day(after), "2026-07-29")
+
+    def test_page_base_url_does_not_stick_between_hosts(self):
+        with patch.object(main, "PUBLIC_BASE_URL", ""):
+            first = self.client.get("https://first.example/drill")
+            second = self.client.get("https://second.example/drill")
+        self.assertIn("https://first.example/drill", first.text)
+        self.assertIn("https://second.example/drill", second.text)
+        self.assertNotIn("first.example", second.text)
+
+    def test_public_base_url_ignores_host_header(self):
+        with patch.object(main, "PUBLIC_BASE_URL", "https://canonical.example/"):
+            response = self.client.get("/drill", headers={"host": "attacker.example"})
+        self.assertIn("https://canonical.example/drill", response.text)
+        self.assertNotIn("attacker.example", response.text)
+
+    def test_short_xff_falls_back_to_last_and_warns(self):
+        request = ClientIpTest()._request({"x-forwarded-for": "203.0.113.10"})
+        with patch.object(main, "CLIENT_IP_INDEX_FROM_END", 2), self.assertLogs("kenzu", "WARNING"):
+            self.assertEqual(main._client_ip(request), "203.0.113.10")
+
+    def test_claim_judgment_rejects_expired_and_replayed_records(self):
+        transaction = Mock()
+        db = Mock()
+        db.transaction.return_value = transaction
+        ref = db.collection.return_value.document.return_value
+        expired = Mock(exists=True)
+        expired.to_dict.return_value = {
+            "expires_at": main.datetime.datetime.now(main.datetime.UTC) - main.datetime.timedelta(seconds=1),
+            "disputed": False,
+        }
+        replayed = Mock(exists=True)
+        replayed.to_dict.return_value = {
+            "expires_at": main.datetime.datetime.now(main.datetime.UTC) + main.datetime.timedelta(seconds=1),
+            "disputed": True,
+        }
+        ref.get.side_effect = [expired, replayed]
+        with patch.object(main, "_get_firestore_client", return_value=db), \
+             patch.object(main.firestore, "transactional", side_effect=lambda fn: fn):
+            self.assertEqual(main._claim_judgment("d" * 32)[0], "expired")
+            self.assertEqual(main._claim_judgment("d" * 32)[0], "replayed")
+        transaction.update.assert_not_called()
+
+    def test_report_is_disabled_without_feedback_bucket(self):
+        with patch.object(main, "FEEDBACK_BUCKET", ""):
+            response = self.client.post("/api/report", json={"judgment_id": "e" * 32})
+        self.assertEqual(response.status_code, 503)
 
 
 class FirestoreResilienceTest(unittest.TestCase):
